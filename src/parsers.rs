@@ -2,7 +2,7 @@ use std::str;
 use std::mem::transmute;
 use std::ops::{Range, RangeFrom, RangeTo};
 
-use nom::{alpha, alphanumeric, digit, eol, is_alphanumeric, not_line_ending, recognize_float, space, AsBytes, AsChar,
+use nom::{alpha, alphanumeric, digit, not_line_ending, recognize_float, space, AsBytes, AsChar,
           AtEof, Compare, IResult, InputIter, InputLength, InputTake, Offset, Slice};
 
 use super::mem::{MemorySize, MemoryUnit};
@@ -274,8 +274,8 @@ where
   map_res!(
     input,
     recognize!(pair!(
-      value!((), call!(alpha)),
-      value!((), opt!(call!(alphanumeric)))
+      value!((), alpha),
+      value!((), opt!(alphanumeric))
     )),
     convert_to_str
   )
