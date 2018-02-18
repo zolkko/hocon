@@ -1,0 +1,9 @@
+[package]
+name = "hocon"
+version = "0.1.0"
+authors = ["zolkko <zolkko@gmail.com>"]
+
+
+[dependencies.nom]
+version = "4.0.0-beta1"
+features = ["nightly", "verbose-errors"]
