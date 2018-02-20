@@ -3,7 +3,9 @@ use std::mem::transmute;
 use std::ops::{Range, RangeFrom, RangeTo};
 
 use nom::{alpha, alphanumeric, digit, not_line_ending, recognize_float, space, AsBytes, AsChar,
-          AtEof, Compare, IResult, InputIter, InputLength, InputTake, Offset, Slice};
+          AtEof, Compare, IResult, InputIter, InputLength, InputTake, Offset, Slice,
+          Err, Needed, ErrorKind, need_more, CompareResult, Context};
+
 
 use super::mem::{MemorySize, MemoryUnit};
 
@@ -238,18 +240,22 @@ named!(
 );
 
 /// Consume a single line comment
-fn line_comment<T>(input: T) -> IResult<T, ()>
+fn line_comment<T>(input: T) -> IResult<T, T>
 where
   T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
   T: InputIter + InputLength + InputTake,
-  T: Compare<&'static str> + AtEof,
+  T: Compare<&'static str> + AtEof + Offset,
   T: Clone + PartialEq,
   <T as InputIter>::Item: AsChar + Clone,
   <T as InputIter>::RawItem: AsChar + Clone,
 {
-  do_parse!(
+  recognize!(
     input,
-    many0!(space) >> alt!(tag!("#") | tag!("//")) >> call!(not_line_ending) >> (())
+    do_parse!(
+      alt!(tag!("#") | tag!("//")) >>
+      call!(not_line_ending) >>
+      (())
+    )
   )
 }
 
@@ -294,6 +300,55 @@ where
   separated_list!(input, char!('.'), simple_identifier)
 }
 
+/// Parses a c++ish multiline comment. Nested comments
+/// are supported.
+fn multiline_comment<T>(input: T) -> IResult<T, T>
+where
+  T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+  T: InputIter + InputLength + InputTake,
+  T: AtEof + Compare<&'static str>,
+  <T as InputIter>::Item: AsChar,
+  <T as InputIter>::RawItem: AsChar,
+{
+  match (input).compare("/*") {
+    CompareResult::Ok => (),
+    CompareResult::Incomplete => {
+      return need_more(input, Needed::Size(2));
+    },
+    CompareResult::Error => {
+      let e:ErrorKind<u32> = ErrorKind::Tag;
+      return Err(Err::Error(Context::Code(input, e)));
+    }
+  };
+
+  let mut level: usize = 1;
+  let mut prev: char = '\0';
+  let mut maybe_close_index: Option<usize> = None;
+
+  for (i, elem) in input.iter_elements().enumerate().skip(2) {
+    let chr = elem.as_char();
+    if prev == '/' && chr == '*' {
+      prev = '\0';
+      level += 1;
+    } else if prev == '*' && chr == '/' {
+      prev = '\0';
+      level -= 1;
+      if level == 0 {
+        maybe_close_index = Some(i);
+        break;
+      }
+    } else {
+      prev = chr;
+    }
+  }
+
+  if let Some(index) = maybe_close_index {
+    Ok(input.take_split(index + 1))
+  } else {
+    need_more(input, Needed::Size(level * 2))
+  }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -303,27 +358,44 @@ mod tests {
   use super::*;
 
   #[test]
+  fn parse_multiline_comment() {
+    assert_eq!(
+      multiline_comment("/* some comment */"),
+      Ok(("", "/* some comment */")),
+      "a multiline comment placed on single line"
+    );
+
+    assert_eq!(
+      multiline_comment("/* some\n comment\n */"),
+      Ok(("", "/* some\n comment\n */")),
+      "a multiline comment placed on multiple lines"
+    );
+
+    assert_eq!(
+      multiline_comment("/**\n  * c++ style comments\n **/"),
+      Ok(("", "/**\n  * c++ style comments\n **/")),
+      "c++ style comment"
+    );
+
+    assert_eq!(
+      multiline_comment("/** first /*/ second */*/"),
+      Ok(("", "/** first /*/ second */*/")),
+      "multiple nested comments"
+    );
+  }
+
+  #[test]
   fn parse_line_comments() {
     assert_eq!(
       line_comment(b"# this is a line comment\n".as_ref()),
-      Ok((&b"\n"[..], ())),
+      Ok((&b"\n"[..], &b"# this is a line comment"[..])),
       "a line comment can start with a hash sign"
     );
     assert_eq!(
       line_comment(b"// this is another line comment\n".as_ref()),
-      Ok((&b"\n"[..], ())),
+      Ok((&b"\n"[..], &b"// this is another line comment"[..])),
       "a line comment can start with a double slash sign"
     );
-    assert_eq!(
-      line_comment(b"  # some comment\n".as_ref()),
-      Ok((&b"\n"[..], ())),
-      "there could be spaces before a comment line"
-    );
-    assert_eq!(
-      line_comment(CompleteByteSlice(b" # final line".as_ref())),
-      Ok((CompleteByteSlice(&b""[..]), ())),
-      "a comment line can be at the last line in the file"
-    )
   }
 
   #[test]
