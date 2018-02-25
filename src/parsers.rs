@@ -207,24 +207,6 @@ named!(
 );
 
 named!(
-  take_until_closing_quote,
-  recognize!(fold_many0!(
-    alt!(value!((), pair!(char!('\\'), take!(1))) | value!((), is_not!("\\\""))),
-    (),
-    |_, _| ()
-  ))
-);
-
-named!(
-  string<&str>,
-  delimited!(
-    tag!("\""),
-    map_res!(take_until_closing_quote, str::from_utf8),
-    tag!("\"")
-  )
-);
-
-named!(
   number<f64>,
   flat_map!(call!(recognize_float), parse_to!(f64))
 );
@@ -300,87 +282,264 @@ where
   separated_list!(input, char!('.'), simple_identifier)
 }
 
-/// Parses a c++ish multiline comment. Nested comments
-/// are supported.
-fn multiline_comment<T>(input: T) -> IResult<T, T>
+
+fn take_until_closing_triple_quotes<T>(input: T) -> IResult<T, T>
 where
-  T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+  T: InputIter + InputLength + InputTake,
+  T: AtEof,
+  <T as InputIter>::Item: AsChar,
+{
+  let mut prev = ['\0'; 3];
+  for (i, elem) in input.iter_elements().enumerate() {
+    let chr = elem.as_char();
+    if prev[2] != '\\' && prev[1] == '"' && prev[0] == '"' && chr == '"' {
+      let (a, b) = input.take_split(i - 2);
+      return Ok((a, b));
+    }
+    prev[2] = prev[1];
+    prev[1] = prev[0];
+    prev[0] = chr;
+  }
+  need_more(input, Needed::Unknown)
+}
+
+fn triple_quoted_string<T>(input: T) -> IResult<T, T>
+where
   T: InputIter + InputLength + InputTake,
   T: AtEof + Compare<&'static str>,
   <T as InputIter>::Item: AsChar,
-  <T as InputIter>::RawItem: AsChar,
+  T: Clone,
 {
-  match (input).compare("/*") {
-    CompareResult::Ok => (),
-    CompareResult::Incomplete => {
-      return need_more(input, Needed::Size(2));
-    },
-    CompareResult::Error => {
-      let e:ErrorKind<u32> = ErrorKind::Tag;
-      return Err(Err::Error(Context::Code(input, e)));
-    }
-  };
+  delimited!(input,
+    tag!("\"\"\""),
+    take_until_closing_triple_quotes,
+    tag!("\"\"\"")
+  )
+}
 
-  let mut level: usize = 1;
-  let mut prev: char = '\0';
-  let mut maybe_close_index: Option<usize> = None;
-
-  for (i, elem) in input.iter_elements().enumerate().skip(2) {
+fn take_until_closing_double_quotes<'a, T>(input: T) -> IResult<T, T>
+where
+  T: InputIter + InputLength + InputTake,
+  T: AtEof,
+  <T as InputIter>::Item: AsChar,
+{
+  let mut prev = '\0';
+  for (i, elem) in input.iter_elements().enumerate() {
     let chr = elem.as_char();
-    if prev == '/' && chr == '*' {
-      prev = '\0';
-      level += 1;
-    } else if prev == '*' && chr == '/' {
-      prev = '\0';
-      level -= 1;
-      if level == 0 {
-        maybe_close_index = Some(i);
-        break;
+    if prev != '\\' && chr == '"' {
+      return Ok(input.take_split(i))
+    }
+    prev = chr;
+  }
+
+  need_more(input, Needed::Size(1))
+}
+
+fn double_quoted_string<T>(input: T) -> IResult<T, T>
+where
+  T: InputIter + InputLength + InputTake,
+  T: AtEof,
+  T: Compare<&'static str>,
+  <T as InputIter>::Item: AsChar,
+  T: Clone,
+{
+  delimited!(input,
+    tag!("\""),
+    take_until_closing_double_quotes,
+    tag!("\"")
+  )
+}
+
+fn generic_string<T>(input: T) -> IResult<T, T>
+where
+  T: InputIter + InputLength + InputTake,
+  T: AtEof,
+  T: Compare<&'static str>,
+  <T as InputIter>::Item: AsChar,
+{
+  let mut index: Option<usize> = None;
+  let mut whitespace_pos: Option<usize> = None;
+
+  for (i, elem) in input.iter_elements().enumerate() {
+    let chr = elem.as_char();
+    if chr == ' ' || chr == '\t' {
+      whitespace_pos = whitespace_pos.or(Some(i));
+    } else if chr == '#' || chr == ',' || chr == '\r' || chr == '\n' {
+      index = Some(i);
+      break;
+    } else if chr == '/' {
+      let (next, _) = input.take_split(i);
+      if next.input_len() < 2 {
+        if next.at_eof() {
+          whitespace_pos = None;
+        } else {
+          return need_more(input, Needed::Size(1))
+        }
+      } else {
+        match next.compare("//") {
+          CompareResult::Ok => {
+            index = Some(i);
+            break;
+          },
+          CompareResult::Incomplete => {
+            return need_more(input, Needed::Size(1))
+          },
+          CompareResult::Error => {
+            whitespace_pos = None;
+          }
+        }
       }
     } else {
-      prev = chr;
+      whitespace_pos = None;
     }
   }
 
-  if let Some(index) = maybe_close_index {
-    Ok(input.take_split(index + 1))
-  } else {
-    need_more(input, Needed::Size(level * 2))
+  match index {
+    Some(i) => {
+      Ok(input.take_split(whitespace_pos.unwrap_or(i)))
+    },
+    None => {
+      if input.at_eof() {
+        let len = input.input_len();
+        Ok(input.take_split(whitespace_pos.unwrap_or(len)))
+      } else {
+        need_more(input, Needed::Size(1))
+      }
+    }
   }
 }
 
+fn string_value<T>(input: T) -> IResult<T, T>
+where
+  T: InputIter + InputLength + InputTake,
+  T: AtEof,
+  T: Compare<&'static str>,
+  <T as InputIter>::Item: AsChar,
+  T: Clone,
+{
+  alt_complete!(input,
+    triple_quoted_string |
+    double_quoted_string |
+    generic_string
+  )
+}
 
 #[cfg(test)]
 mod tests {
 
-  use nom::types::{CompleteByteSlice, CompleteStr};
+  use nom::types::CompleteStr;
   use mem::{MemorySize, MemoryUnit};
   use super::*;
 
   #[test]
-  fn parse_multiline_comment() {
+  fn parse_string_value() {
     assert_eq!(
-      multiline_comment("/* some comment */"),
-      Ok(("", "/* some comment */")),
-      "a multiline comment placed on single line"
+      string_value(CompleteStr("value of unknown type")),
+      Ok((CompleteStr(""), CompleteStr("value of unknown type"))),
+      "must recognize generic value"
+    );
+    assert_eq!(
+      string_value("value of unknown type\n"),
+      Ok(("\n", "value of unknown type")),
+      "must recognize generic value with ends with terminal symbol"
+    );
+    assert_eq!(
+      string_value("\"quoted string\""),
+      Ok(("", "quoted string")),
+      "must recognize double-quoted string"
+    );
+    assert_eq!(
+      string_value("\"\"\"quoted string\"\"\""),
+      Ok(("", "quoted string")),
+      "must recognize triple-quoted string"
+    );
+  }
+
+  #[test]
+  fn parse_generic_string() {
+    assert_eq!(generic_string(CompleteStr(&"123mb")), Ok((CompleteStr(&""), CompleteStr(&"123mb"))));
+    assert_eq!(generic_string(CompleteStr(&"123mb   ")), Ok((CompleteStr(&"   "), CompleteStr(&"123mb"))));
+    assert_eq!(generic_string(CompleteStr(&"123 mb")), Ok((CompleteStr(&""), CompleteStr(&"123 mb"))));
+    assert_eq!(generic_string("123 mb\n"), Ok(("\n", "123 mb")));
+    assert_eq!(generic_string("123 mb #comment"), Ok((" #comment", "123 mb")));
+    assert_eq!(generic_string("123 mb // comment"), Ok((" // comment", "123 mb")));
+    assert_eq!(generic_string("123 mb  //"), Ok(("  //", "123 mb")));
+    assert_eq!(generic_string("123 mb  //"), Ok(("  //", "123 mb")));
+    assert_eq!(generic_string("123 mb//"), Ok(("//", "123 mb")));
+    assert_eq!(generic_string(CompleteStr("123 mb  /")), Ok((CompleteStr(""), CompleteStr("123 mb  /"))));
+  }
+
+  #[test]
+  fn parse_triple_quoted_string() {
+    assert_eq!(
+      take_until_closing_triple_quotes("ends with triple quotes\"\"\""),
+      Ok(("\"\"\"", "ends with triple quotes")),
+      "should stop when it reaches triple quotes"
+    );
+    assert_eq!(
+      take_until_closing_triple_quotes("ends with triple quotes\"\""),
+      Result::Err(Err::Incomplete(Needed::Unknown)),
+      "should report that input is incomplete (missing one?)"
+    );
+    assert_eq!(
+      take_until_closing_triple_quotes("ends with triple quotes\""),
+      Result::Err(Err::Incomplete(Needed::Unknown)),
+      "should report that input is incomplete (missing two?)"
     );
 
     assert_eq!(
-      multiline_comment("/* some\n comment\n */"),
-      Ok(("", "/* some\n comment\n */")),
-      "a multiline comment placed on multiple lines"
+      triple_quoted_string("\"\"\"hello world\"\"\""),
+      Ok(("", "hello world")),
+      "should recognize triple quoted strings"
+    );
+    assert_eq!(
+      triple_quoted_string("\"\"\"hello world\"\""),
+      Result::Err(Err::Incomplete(Needed::Unknown)),
+      "should not recognize incomplete triple quoted strings (one quote is missing)"
+    );
+    assert_eq!(
+      triple_quoted_string("\"\"\"hello world\""),
+      Result::Err(Err::Incomplete(Needed::Unknown)),
+      "should not recognize incomplete triple quoted strings (two quotes are missing)"
     );
 
     assert_eq!(
-      multiline_comment("/**\n  * c++ style comments\n **/"),
-      Ok(("", "/**\n  * c++ style comments\n **/")),
-      "c++ style comment"
+      triple_quoted_string("\"\"\"\"hello\" world\"\"\""),
+      Ok(("", "\"hello\" world")),
+      "should ignore internal quotation"
     );
 
     assert_eq!(
-      multiline_comment("/** first /*/ second */*/"),
-      Ok(("", "/** first /*/ second */*/")),
-      "multiple nested comments"
+      triple_quoted_string("\"\"\"\"hello\" \\\"world\\\"\"\"\""),
+      Ok(("", "\"hello\" \\\"world\\\"")),
+      "should ignore escaped quote"
+    )
+  }
+
+  #[test]
+  fn parse_quoted_string() {
+    assert_eq!(
+      take_until_closing_double_quotes("\\n\r \\\"hello\\\" all\" "),
+      Ok(("\" ", "\\n\r \\\"hello\\\" all")),
+      "must consume entire row"
+    );
+    assert_eq!(
+      double_quoted_string("\"hello world!\""),
+      Ok(("", "hello world!")),
+      "must recognize quoted string"
+    );
+    assert_eq!(
+      double_quoted_string("\"\""),
+      Ok(("", "")),
+      "must recognize empty quoted string"
+    );
+    assert_eq!(
+      double_quoted_string("\"Hello, \\\"username\\\"!\\\n\nHow are your doing?\""),
+      Ok((
+        "",
+        "Hello, \\\"username\\\"!\\\n\nHow are your doing?"
+      )),
+      "must handle escaped characters"
     );
   }
 
@@ -681,34 +840,5 @@ mod tests {
   #[test]
   fn memory_size_should_recognize_yobibytes() {
     assert_memory_size!(MemoryUnit::Yobibytes, "yobibytes", "yobibyte", "YiB", "Yi", "Y", "y");
-  }
-
-  #[test]
-  fn take_until_closing_quote_should_consume_entire_row() {
-    assert_eq!(
-      take_until_closing_quote(b"\\n\r \\\"hello\\\" all\" "),
-      Ok((&b"\" "[..], &b"\\n\r \\\"hello\\\" all"[..]))
-    )
-  }
-
-  #[test]
-  fn string_should_work_single_word() {
-    assert_eq!(string(b"\"hello world!\""), Ok((&b""[..], "hello world!")));
-  }
-
-  #[test]
-  fn string_should_work_on_empty_string() {
-    assert_eq!(string(b"\"\""), Ok((&b""[..], "")));
-  }
-
-  #[test]
-  fn string_should_handle_escaped_characters() {
-    assert_eq!(
-      string(b"\"Hello, \\\"username\\\"!\\\n\nHow are your doing?\""),
-      Ok((
-        &b""[..],
-        "Hello, \\\"username\\\"!\\\n\nHow are your doing?"
-      ))
-    );
   }
 }
