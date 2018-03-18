@@ -1,5 +1,6 @@
 use std::str;
 use std::mem::transmute;
+use std::cmp::PartialEq;
 use std::ops::{Range, RangeFrom, RangeTo};
 
 use nom::{alpha, alphanumeric, digit, not_line_ending, recognize_float, space, space0, eol, AsBytes, AsChar,
@@ -246,9 +247,8 @@ where
   T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
   T: InputIter + InputLength + InputTake + AsBytes + Offset,
   T: AtEof,
-  T: Clone + Copy,
+  T: Clone + Copy + PartialEq,
   T: Compare<&'static str>,
-  T: ::std::cmp::PartialEq,
   <T as InputIter>::Item: AsChar + Clone,
   <T as InputIter>::RawItem: AsChar + Clone,
 {
