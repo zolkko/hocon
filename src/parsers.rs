@@ -4,7 +4,7 @@ use std::ops::{Range, RangeFrom, RangeTo};
 use std::str;
 
 use nom::{
-    alpha, alphanumeric, eol, need_more, not_line_ending, recognize_float, space, AsBytes, AsChar, AtEof, Compare, CompareResult, IResult, InputIter, InputLength, InputTake,
+    alpha, alphanumeric, eol, need_more, not_line_ending, recognize_float, space, space0, AsBytes, AsChar, AtEof, Compare, CompareResult, IResult, InputIter, InputLength, InputTake,
     InputTakeAtPosition, Needed, Offset, Slice,
 };
 
@@ -247,47 +247,63 @@ where
 fn value_separator<T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake + AsBytes + Offset,
-    T: Clone + Copy,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
     T: AtEof,
+    T: Clone + Copy + PartialEq,
     T: Compare<&'static str>,
     <T as InputIter>::Item: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    tag!(input, ",")
+    recognize!(input,
+        do_parse!(
+            space0 >>
+            tag!(",") >>
+            space0 >>
+            (())
+        )
+    )
 }
 
 /// Parsers array of values
-fn array<T>(input: T) -> IResult<T, ()>
+fn parse_array<T>(input: T) -> IResult<T, ()>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake + AsBytes + Offset,
-    T: Clone + Copy,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
     T: AtEof,
+    T: Clone + Copy + PartialEq,
     T: Compare<&'static str>,
     <T as InputIter>::Item: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    do_parse!(
-        input,
-        tag!("[") >> separated_list!(value_separator, string_value) >> opt!(value_separator) >> tag!("]") >> (())
+    do_parse!(input,
+        tag!("[") >>
+        space0 >>
+        separated_list!(value_separator, tag!("1")) >>
+        space0 >>
+        opt!(value_separator) >>
+        space0 >>
+        tag!("]") >>
+        (())
     )
 }
 
 /// For some unknown for me reason HOCON format allows a user specify an array
 /// using two or more consecutive arrays.
 /// My guess is that a user may use variables inside value definitions.
-fn arrays<T>(input: T) -> IResult<T, ()>
+fn parse_arrays<T>(input: T) -> IResult<T, ()>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake + AsBytes + Offset,
-    T: Clone + Copy,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
     T: AtEof,
+    T: Clone + Copy + PartialEq,
     T: Compare<&'static str>,
     <T as InputIter>::Item: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    value!(input, (), many1!(array))
+    value!(input, (), many1!(parse_array))
 }
 
 #[cfg(test)]
@@ -296,6 +312,13 @@ mod tests {
     use super::*;
     use nom;
     use nom::types::CompleteStr;
+
+    #[test]
+    fn test_array() {
+        assert_eq!(parse_array(CompleteStr("[1,1,1]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""),())));
+        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 , ]")), Ok((CompleteStr(""),())));
+    }
 
     #[test]
     fn test_generic_value() {
