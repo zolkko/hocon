@@ -5,5 +5,5 @@ authors = ["zolkko <zolkko@gmail.com>"]
 
 
 [dependencies.nom]
-version = "4.0.0-beta1"
-features = ["nightly", "verbose-errors"]
+version = "~4.0.0"
+features = ["verbose-errors"] # "nightly"

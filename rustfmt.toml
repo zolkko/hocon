@@ -1,3 +1,2 @@
-tab_spaces = 2
-struct_field_align_threshold = 100
-max_width = 120
+struct_field_align_threshold = 180
+max_width = 180
