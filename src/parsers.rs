@@ -101,7 +101,7 @@ where
     delimited!(input, tag!("\"\"\""), take_until_closing_triple_quotes, tag!("\"\"\""))
 }
 
-fn take_until_closing_double_quotes<'a, T>(input: T) -> IResult<T, T>
+fn take_until_closing_double_quotes<T>(input: T) -> IResult<T, T>
 where
     T: InputIter + InputLength + InputTake,
     T: AtEof,
@@ -146,8 +146,8 @@ where
 /// The parser consumes any value provided, including sub-strings. And it terminates
 /// when an array, an object, a line ends, or a file ends.
 ///
-/// If there are some whitespaces at the begging of the `input`, they are considered a part
-/// of a value. The same tiem the parser does not include trailing whitespaces.
+/// All the whitespaces before and after a value are consumed by the parse. Trailing
+/// whitespaces, if any, are supposed to be trimmed at later stages.
 fn any_value<T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
@@ -163,50 +163,40 @@ where
     let len = input.input_len();
 
     let mut iter = input.iter_elements().enumerate();
-    let mut space_index: Option<usize> = None;
     let mut offset: Option<usize> = None;
 
     while let Some((i, x)) = iter.next() {
         let chr = x.as_char();
 
-        if chr == ' ' || chr == '\t' || chr == '\r' {
-            if space_index.is_none() {
-                space_index = Some(i);
-            }
-        } else {
-            if chr == ']' || chr == '}' || chr == ',' || chr == '\n' || chr == '#' {
-                let pos = space_index.unwrap_or(i) + offset.unwrap_or(0);
+        if chr == ']' || chr == '}' || chr == ',' || chr == '\r' || chr == '\n' || chr == '#' {
+            let pos = i + offset.unwrap_or(0);
+            return Ok(input.take_split(pos));
+        } else if chr == '/' {
+            let (next, _) = input.take_split(i + offset.unwrap_or(0));
+            if next.compare("//") == CompareResult::Ok {
+                let pos = i + offset.unwrap_or(0);
                 return Ok(input.take_split(pos));
-            } else if chr == '/' {
-                let (next, _) = input.take_split(i + offset.unwrap_or(0));
-                if next.compare("//") == CompareResult::Ok {
-                    let pos = space_index.unwrap_or(i) + offset.unwrap_or(0);
-                    return Ok(input.take_split(pos));
+            }
+        } else if chr == '"' {
+            use nom;
+            let (next, _) = input.take_split(i + offset.unwrap_or(0));
+            match string_value(next) {
+                Ok((l, _)) => {
+                    offset = Some(input.offset(&l));
+                    iter = l.iter_elements().enumerate();
                 }
-            } else if chr == '"' {
-                use nom;
-                let (next, _) = input.take_split(i + offset.unwrap_or(0));
-                match string_value(next) {
-                    Ok((l, _)) => {
-                        offset = Some(input.offset(&l));
-                        iter = l.iter_elements().enumerate();
-                    }
-                    Err(nom::Err::Incomplete(needed)) => {
-                        return need_more(input, needed);
-                    }
-                    Err(err) => {
-                        return Err(err);
-                    }
+                Err(nom::Err::Incomplete(needed)) => {
+                    return need_more(input, needed);
+                }
+                Err(err) => {
+                    return Err(err);
                 }
             }
-
-            space_index = None;
         }
     }
 
     if input.at_eof() {
-        let pos = space_index.map_or(len, |x| x + offset.unwrap_or(0));
-        Ok(input.take_split(pos))
+        Ok(input.take_split(len))
     } else {
         need_more(input, Needed::Size(1))
     }
@@ -237,7 +227,14 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    recognize!(input, many0!(alt_complete!(value!((), space) | value!((), tuple!(opt!(line_comment), eol_or_eof)))))
+    recognize!(input,
+        many0!(
+            alt_complete!(
+                value!((), space) |
+                value!((), tuple!(opt!(line_comment), eol_or_eof))
+            )
+        )
+    )
 }
 
 /// This is supposed to be a value separator inside arrays and objects.
@@ -258,7 +255,7 @@ where
     recognize!(input,
         do_parse!(
             space0 >>
-            tag!(",") >>
+            alt!(tag!(",") | eol | line_comment) >>
             space0 >>
             (())
         )
@@ -280,7 +277,10 @@ where
     do_parse!(input,
         tag!("[") >>
         space0 >>
-        separated_list!(value_separator, tag!("1")) >>
+        separated_list!(
+            value_separator,
+            parse_value
+        ) >>
         space0 >>
         opt!(value_separator) >>
         space0 >>
@@ -290,8 +290,8 @@ where
 }
 
 /// For some unknown for me reason HOCON format allows a user specify an array
-/// using two or more consecutive arrays.
-/// My guess is that a user may use variables inside value definitions.
+/// using two or more consecutive arrays, but only if the second array
+/// ends at the same line where first array begins.
 fn parse_arrays<T>(input: T) -> IResult<T, ()>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
@@ -303,7 +303,33 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    value!(input, (), many1!(parse_array))
+    value!(input, (),
+        many1!(
+            do_parse!(
+                parse_array >>
+                space0 >>
+                (())
+            )
+        )
+    )
+}
+
+
+fn parse_value<T>(input: T) -> IResult<T, ()>
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
+    T: AtEof,
+    T: Clone + Copy + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+{
+    alt!(input,
+        parse_arrays |
+        value!((), any_value)
+    )
 }
 
 #[cfg(test)]
@@ -314,10 +340,19 @@ mod tests {
     use nom::types::CompleteStr;
 
     #[test]
-    fn test_array() {
-        assert_eq!(parse_array(CompleteStr("[1,1,1]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""),())));
-        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 , ]")), Ok((CompleteStr(""),())));
+    fn test_parse_array() {
+        assert_eq!(parse_array(CompleteStr("[1,\"1222\",1]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[ 1 , \"1\" , 1 asd , ]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[ 1 \n 1 \r\n 1 ]")), Ok((CompleteStr(""), ())));
+    }
+
+    #[test]
+    fn test_parse_arrays() {
+        assert_eq!(parse_arrays(CompleteStr("[1,2,3]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_arrays(CompleteStr("[1,2,3][3,2,1]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_arrays(CompleteStr("[1,2,3] [3,2,1]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_arrays(CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]")), Ok((CompleteStr(""), ())));
     }
 
     #[test]
@@ -329,22 +364,16 @@ mod tests {
         );
         assert_eq!(
             any_value(CompleteStr(" some value")),
-            Ok((CompleteStr(""), CompleteStr(" some value"))),
-            "ignores leading space"
-        );
+            Ok((CompleteStr(""), CompleteStr(" some value"))));
         assert_eq!(
             any_value(CompleteStr("  some value  ")),
-            Ok((CompleteStr("  "), CompleteStr("  some value"))),
-            "ignores multiple leading spaces"
-        );
+            Ok((CompleteStr(""), CompleteStr("  some value  "))));
         assert_eq!(
-            any_value(CompleteStr("some value # comment")),
-            Ok((CompleteStr(" # comment"), CompleteStr("some value"))),
-            "value ends when a comment begins"
-        );
+            any_value(CompleteStr(" some value # comment")),
+            Ok((CompleteStr("# comment"), CompleteStr(" some value "))));
         assert_eq!(
             any_value(CompleteStr("some value // comment")),
-            Ok((CompleteStr(" // comment"), CompleteStr("some value"))),
+            Ok((CompleteStr("// comment"), CompleteStr("some value "))),
             "value ends when a // comment begins"
         );
         assert_eq!(
@@ -365,11 +394,11 @@ mod tests {
         );
         assert_eq!(
             any_value(CompleteStr("  \"quoted string\"  ")),
-            Ok((CompleteStr("  "), CompleteStr("  \"quoted string\""))),
+            Ok((CompleteStr(""), CompleteStr("  \"quoted string\"  "))),
             "supports quoted strings"
         );
         assert_eq!(any_value(CompleteStr("\"quoted string\"]")), Ok((CompleteStr("]"), CompleteStr("\"quoted string\""))));
-        assert_eq!(any_value(CompleteStr("\"quoted string\"  ]")), Ok((CompleteStr("  ]"), CompleteStr("\"quoted string\""))));
+        assert_eq!(any_value(CompleteStr("\"quoted string\"  ]")), Ok((CompleteStr("]"), CompleteStr("\"quoted string\"  "))));
         assert_eq!(any_value(CompleteStr("\"quoted string\"")), Ok((CompleteStr(""), CompleteStr("\"quoted string\""))));
 
         assert_eq!(
@@ -378,19 +407,19 @@ mod tests {
         );
         assert_eq!(
             any_value(CompleteStr("a value with \"quoted\" string # comment line")),
-            Ok((CompleteStr(" # comment line"), CompleteStr("a value with \"quoted\" string")))
+            Ok((CompleteStr("# comment line"), CompleteStr("a value with \"quoted\" string ")))
         );
         assert_eq!(
             any_value(CompleteStr("a value with \"# quoted comment\" string # comment line")),
-            Ok((CompleteStr(" # comment line"), CompleteStr("a value with \"# quoted comment\" string")))
+            Ok((CompleteStr("# comment line"), CompleteStr("a value with \"# quoted comment\" string ")))
         );
         assert_eq!(
             any_value(CompleteStr("a value with \"\"\" // quoted comment # test \"\"\" string # comment line")),
-            Ok((CompleteStr(" # comment line"), CompleteStr("a value with \"\"\" // quoted comment # test \"\"\" string")))
+            Ok((CompleteStr("# comment line"), CompleteStr("a value with \"\"\" // quoted comment # test \"\"\" string ")))
         );
-        assert_eq!(any_value(CompleteStr("    ")), Ok((CompleteStr("    "), CompleteStr(""))));
+        assert_eq!(any_value(CompleteStr("    ")), Ok((CompleteStr(""), CompleteStr("    "))));
         assert_eq!(any_value(CompleteStr("]")), Ok((CompleteStr("]"), CompleteStr(""))));
-        assert_eq!(any_value(CompleteStr(" \t ]")), Ok((CompleteStr(" \t ]"), CompleteStr(""))));
+        assert_eq!(any_value(CompleteStr(" \t ]")), Ok((CompleteStr("]"), CompleteStr(" \t "))));
         assert_eq!(
             any_value(CompleteStr("a \"value\" with \"quoted\" string")),
             Ok((CompleteStr(""), CompleteStr("a \"value\" with \"quoted\" string")))
