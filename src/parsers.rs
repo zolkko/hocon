@@ -8,32 +8,6 @@ use nom::{
     InputTakeAtPosition, Needed, Offset, Slice,
 };
 
-named!(number<f64>, flat_map!(call!(recognize_float), parse_to!(f64)));
-
-named!(
-    boolean<bool>,
-    alt!(
-    tag_no_case!("true")  => { |_| true } |
-    tag_no_case!("false") => { |_| false } |
-    tag_no_case!("yes")  => { |_| true } |
-    tag_no_case!("no") => { |_| false }
-  )
-);
-
-///
-/// Consume a comment until the end of the line.
-///
-fn line_comment<T>(input: T) -> IResult<T, T>
-where
-    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake,
-    T: Compare<&'static str> + AtEof + Offset,
-    T: Clone + PartialEq,
-    <T as InputIter>::Item: AsChar + Clone,
-    <T as InputIter>::RawItem: AsChar + Clone,
-{
-    recognize!(input, do_parse!(alt!(tag!("#") | tag!("//")) >> call!(not_line_ending) >> (())))
-}
 
 /// A helper function that transforms a slice to utf-8 string without coping
 /// its content. To do this a `transmute` function is used which extends lifetime
@@ -73,7 +47,7 @@ where
 
 fn take_until_closing_triple_quotes<T>(input: T) -> IResult<T, T>
 where
-    T: InputIter + InputLength + InputTake,
+    T: InputIter + InputTake,
     T: AtEof,
     <T as InputIter>::Item: AsChar,
 {
@@ -94,9 +68,10 @@ where
 fn triple_quoted_string<T>(input: T) -> IResult<T, T>
 where
     T: InputIter + InputLength + InputTake,
-    T: AtEof + Compare<&'static str>,
-    <T as InputIter>::Item: AsChar,
     T: Clone,
+    T: AtEof,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar,
 {
     delimited!(input, tag!("\"\"\""), take_until_closing_triple_quotes, tag!("\"\"\""))
 }
@@ -150,15 +125,12 @@ where
 /// whitespaces, if any, are supposed to be trimmed at later stages.
 fn any_value<T>(input: T) -> IResult<T, T>
 where
-    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake + Offset,
-    T: InputTakeAtPosition,
-    <T as InputTakeAtPosition>::Item: AsChar + Clone,
-    T: Clone + Copy,
-    T: AtEof,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + Clone + AtEof,
     T: Compare<&'static str>,
     <T as InputIter>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
     let len = input.input_len();
 
@@ -202,67 +174,76 @@ where
     }
 }
 
-/// Recognizes either end of line or end of the file "character".
-fn eol_or_eof<T>(input: T) -> IResult<T, T>
+/// The parser consume single line comment including trailing carriage return.
+/// It also supports comments a comment at the end of a file.
+fn parse_comment<T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputLength + InputTake,
-    T: AtEof,
-    T: Compare<&'static str>,
-    T: Clone + Copy,
-{
-    alt!(input, eol | eof!())
-}
-
-/// Recognizes a sequence of empty lines. These can be whitespaces, comments,
-/// empty new lines and any combinations of those.
-fn empty_lines<T>(input: T) -> IResult<T, T>
-where
-    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
-    T: AtEof,
-    T: Clone + Copy + PartialEq,
+    T: Copy + Offset + AtEof,
     T: Compare<&'static str>,
     <T as InputIter>::Item: AsChar + Clone,
-    <T as InputTakeAtPosition>::Item: AsChar + Clone,
-    <T as InputIter>::RawItem: AsChar + Clone,
-{
-    recognize!(input,
-        many0!(
-            alt_complete!(
-                value!((), space) |
-                value!((), tuple!(opt!(line_comment), eol_or_eof))
-            )
-        )
-    )
-}
-
-/// This is supposed to be a value separator inside arrays and objects.
-/// Values of an array may be separated by a comma and an end of line.
-/// There are could be some empty lines, which need to be ignored.
-/// Also a user may decide to put a few comment lines into an array or an object definition.
-fn value_separator<T>(input: T) -> IResult<T, T>
-where
-    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
-    T: AtEof,
-    T: Clone + Copy + PartialEq,
-    T: Compare<&'static str>,
-    <T as InputIter>::Item: AsChar + Clone,
-    <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
     recognize!(input,
         do_parse!(
-            space0 >>
-            alt!(tag!(",") | eol | line_comment) >>
-            space0 >>
+            alt!(tag!("#") | tag!("//")) >>
+            not_line_ending >>
+            alt!(eol | eof!()) >>
             (())
         )
     )
 }
 
-/// Parsers array of values
+/// The parser consume single empty line or a comment line,
+/// including trailing spaces.
+fn parse_empty_line<T>(input: T) -> IResult<T, T>
+    where
+        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+        T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+        T: Offset + Copy + AtEof,
+        T: Compare<&'static str>,
+        <T as InputIter>::Item: AsChar + Clone,
+        <T as InputIter>::RawItem: AsChar + Clone,
+        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+{
+    recognize!(input, pair!(alt!(eol | parse_comment), space0))
+}
+
+/// Array elements are be separated by a comma or EOL.
+/// The rest of empty and comment lines must be ignored.
+fn parse_array_separator<T>(input: T) -> IResult<T, T>
+    where
+        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+        T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+        T: Offset + AtEof + Clone + Copy + PartialEq,
+        T: Compare<&'static str>,
+        <T as InputIter>::Item: AsChar + Clone,
+        <T as InputIter>::RawItem: AsChar + Clone,
+        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+{
+    recognize!(input,
+        pair!(
+            space0,
+            alt!(
+                do_parse!(
+                    pair!(tag!(","), space0) >>
+                    many0!(parse_empty_line) >>
+                    (())
+                ) |
+                do_parse!(
+                    many1!(parse_empty_line) >>
+                    opt!(pair!(tag!(","), space0)) >>
+                    many0!(parse_empty_line) >>
+                    (())
+                )
+            )
+        )
+    )
+}
+
+/// Parsers array of values.
+/// An array can be empty, it can contain single element.
 fn parse_array<T>(input: T) -> IResult<T, ()>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
@@ -277,21 +258,28 @@ where
     do_parse!(input,
         tag!("[") >>
         space0 >>
-        separated_list!(
-            value_separator,
-            parse_value
+        opt!(
+            do_parse!(
+                separated_list!(
+                    parse_array_separator,
+                    parse_value
+                ) >>
+                space0 >>
+                opt!(parse_array_separator) >>
+                space0 >>
+                (())
+            )
         ) >>
-        space0 >>
-        opt!(value_separator) >>
-        space0 >>
         tag!("]") >>
         (())
     )
 }
 
-/// For some unknown for me reason HOCON format allows a user specify an array
-/// using two or more consecutive arrays, but only if the second array
-/// ends at the same line where first array begins.
+/// HOCON format allows a user specify multiple arrays using two or more consecutive
+/// arrays definitions, but only if both arrays are defined on the same line.
+///
+/// Here I slightly weaken requirements and allow a user to define multiple arrays if the second
+/// array begins on the same line on which the first array ended.
 fn parse_arrays<T>(input: T) -> IResult<T, ()>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
@@ -340,7 +328,52 @@ mod tests {
     use nom::types::CompleteStr;
 
     #[test]
+    fn test_parse_array_separator() {
+        // first alternative
+        assert_eq!(parse_array_separator(CompleteStr(",")),
+                   Ok((CompleteStr(""), CompleteStr(","))));
+        assert_eq!(parse_array_separator(CompleteStr("  ,  ")),
+                   Ok((CompleteStr(""), CompleteStr("  ,  "))));
+        assert_eq!(parse_array_separator(CompleteStr(",\n  ")),
+                   Ok((CompleteStr(""), CompleteStr(",\n  "))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment\n  ")),
+                   Ok((CompleteStr(""), CompleteStr(",#comment\n  "))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment\n")),
+                   Ok((CompleteStr(""), CompleteStr(",#comment\n"))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment")),
+                   Ok((CompleteStr(""), CompleteStr(",#comment"))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment1\n\n#comment2\n")),
+                   Ok((CompleteStr(""), CompleteStr(",#comment1\n\n#comment2\n"))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment1\n\n#comment2\n,")),
+                   Ok((CompleteStr(","), CompleteStr(",#comment1\n\n#comment2\n"))));
+
+        // second alternative
+        assert_eq!(parse_array_separator(CompleteStr("#comment\n")),
+                   Ok((CompleteStr(""), CompleteStr("#comment\n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n")),
+                   Ok((CompleteStr(""), CompleteStr("\n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n\n \n")),
+                   Ok((CompleteStr(""), CompleteStr("\n\n \n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n\n \n ,")),
+                   Ok((CompleteStr(""), CompleteStr("\n\n \n ,"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n\n,#comment1\n\n#comment2\n")),
+                   Ok((CompleteStr(""), CompleteStr("\n\n,#comment1\n\n#comment2\n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n\n,#comment1\n,\n#comment2\n")),
+                   Ok((CompleteStr(",\n#comment2\n"), CompleteStr("\n\n,#comment1\n"))));
+    }
+
+    #[test]
+    fn test_parse_comment() {
+        assert_eq!(parse_comment(CompleteStr("#comment\n")), Ok((CompleteStr(""), CompleteStr("#comment\n"))), "should parse comment line");
+        assert_eq!(parse_comment(CompleteStr("#comment")), Ok( (CompleteStr(""), CompleteStr("#comment"))), "should parse comment if it is the last line in a file");
+        assert_eq!(parse_comment(CompleteStr("//comment\n")), Ok( (CompleteStr(""), CompleteStr("//comment\n"))), "should parse comment which starts with // sequence");
+    }
+
+    #[test]
     fn test_parse_array() {
+        assert_eq!(parse_array(CompleteStr("[]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[ ]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[ 1 ]")), Ok((CompleteStr(""), ())));
         assert_eq!(parse_array(CompleteStr("[1,\"1222\",1]")), Ok((CompleteStr(""), ())));
         assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""), ())));
         assert_eq!(parse_array(CompleteStr("[ 1 , \"1\" , 1 asd , ]")), Ok((CompleteStr(""), ())));
@@ -428,14 +461,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_empty_lines() {
-        assert_eq!(
-            empty_lines("  # some comment\n\n\n  \n   \n# another comment\n  ,"),
-            Ok((",", "  # some comment\n\n\n  \n   \n# another comment\n  "))
-        );
-    }
-
-    #[test]
     fn parse_quoted_string() {
         assert_eq!(
             take_until_closing_double_quotes("\\n\r \\\"hello\\\" all\" "),
@@ -502,20 +527,6 @@ mod tests {
             triple_quoted_string("\"\"\"\"hello\" \\\"world\\\"\"\"\""),
             Ok(("", "\"hello\" \\\"world\\\"")),
             "should ignore escaped quote"
-        );
-    }
-
-    #[test]
-    fn parse_line_comments() {
-        assert_eq!(
-            line_comment(b"# this is a line comment\n".as_ref()),
-            Ok((&b"\n"[..], &b"# this is a line comment"[..])),
-            "a line comment can start with a hash sign"
-        );
-        assert_eq!(
-            line_comment(b"// this is another line comment\n".as_ref()),
-            Ok((&b"\n"[..], &b"// this is another line comment"[..])),
-            "a line comment can start with a double slash sign"
         );
     }
 
