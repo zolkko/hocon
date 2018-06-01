@@ -356,7 +356,7 @@ fn parse_object_body<T>(input: T) -> IResult<T, T>
             do_parse!(
                 separated_list!(
                     parse_array_separator,
-                    parse_field
+                    parse_field_or_include
                 ) >>
                 space0 >>
                 opt!(parse_array_separator) >>
@@ -366,6 +366,68 @@ fn parse_object_body<T>(input: T) -> IResult<T, T>
         ) >>
         (())
     ))
+}
+
+fn parse_include<T>(input: T) -> IResult<T, T>
+    where
+        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+        T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+        T: Offset + Copy + AtEof + AsBytes + PartialEq,
+        T: Compare<&'static str>,
+        <T as InputIter>::Item: AsChar + Clone,
+        <T as InputIter>::RawItem: AsChar + Clone,
+        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+{
+    recognize!(input, do_parse!(
+        tag!("include") >>
+        space >>
+        alt!(
+            value!((), double_quoted_string) |
+            do_parse!(
+                tag!("url(") >>
+                space0 >>
+                double_quoted_string >>
+                space0 >>
+                tag!(")") >>
+                (())
+            ) |
+            do_parse!(
+                tag!("file(") >>
+                space0 >>
+                double_quoted_string >>
+                space0 >>
+                tag!(")") >>
+                (())
+            ) |
+            do_parse!(
+                tag!("classpath(") >>
+                space0 >>
+                double_quoted_string >>
+                space0 >>
+                tag!(")") >>
+                (())
+            )
+        ) >>
+        (())
+    ))
+}
+
+fn parse_field_or_include<T>(input: T) -> IResult<T, T>
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + Copy + AtEof + AsBytes + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
+{
+    recognize!(input,
+        alt!(
+            parse_include |
+            parse_field
+        )
+    )
 }
 
 fn parse_field<T>(input: T) -> IResult<T, T>
@@ -396,12 +458,41 @@ where
     )
 }
 
+fn parse_root<T>(input: T) -> IResult<T, T>
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + Copy + AtEof + AsBytes + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
+{
+    recognize!(input,
+        do_parse!(
+            pair!(space0, many0!(parse_empty_line)) >>
+            alt!(
+                parse_object |
+                parse_object_body
+            ) >>
+            pair!(space0, many0!(parse_empty_line)) >>
+            (())
+        )
+    )
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use nom;
     use nom::types::CompleteStr;
+
+    #[test]
+    fn test_parse_root() {
+        assert_eq!(parse_root(CompleteStr("\nroot.key=123\n")), Ok((CompleteStr(""), CompleteStr("\nroot.key=123\n"))));
+        assert_eq!(parse_root(CompleteStr("\n{root.key=123}\n")), Ok((CompleteStr(""), CompleteStr("\n{root.key=123}\n"))));
+    }
 
     #[test]
     fn test_parse_object() {
@@ -427,6 +518,8 @@ mod tests {
 
                 key2 : value2
                 key3=value3
+                include url("http://example.com")
+                include "http://example.com" #comment line
                 key4 {
                     subkey2 = [1, 2
                     # sub comment
@@ -441,6 +534,8 @@ mod tests {
 
                 key2 : value2
                 key3=value3
+                include url("http://example.com")
+                include "http://example.com" #comment line
                 key4 {
                     subkey2 = [1, 2
                     # sub comment
