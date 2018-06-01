@@ -2,13 +2,15 @@ use std::cmp::PartialEq;
 use std::mem::transmute;
 use std::ops::{Range, RangeFrom, RangeTo};
 use std::str;
+use super::config::Config;
+use std::collections::HashMap;
+use std::collections::BTreeMap;
+
 
 use nom::{
-    alpha, alphanumeric, eol, need_more, not_line_ending, recognize_float, space, space0,
-    AsBytes, AsChar, AtEof, Compare, CompareResult, IResult, InputIter, InputLength, InputTake,
-    InputTakeAtPosition, FindToken, Needed, Offset, Slice,
+    alpha, alphanumeric, eol, need_more, not_line_ending, recognize_float, space, space0, AsBytes, AsChar, AtEof, Compare, CompareResult, FindToken, IResult, InputIter,
+    InputLength, InputTake, InputTakeAtPosition, Needed, Offset, Slice,
 };
-
 
 /// A helper function that transforms a slice to utf-8 string without coping
 /// its content. To do this a `transmute` function is used which extends lifetime
@@ -24,26 +26,37 @@ where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputTake + InputTakeAtPosition + InputLength,
     T: Offset + AtEof + AsBytes + 'a,
+    T: Compare<&'static str>,
     T: Clone,
     <T as InputIter>::Item: AsChar + Clone,
     <T as InputTakeAtPosition>::Item: AsChar,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    map_res!(input, recognize!(pair!(value!((), alpha), value!((), opt!(alphanumeric)))), convert_to_str)
+    map_res!(input,
+        recognize!(
+            value!((), pair!(
+                value!((), alpha),
+                value!((), opt!(alphanumeric))
+            ))
+        ), convert_to_str)
 }
 
 /// An identifier can be composite. Sub-identifier is separated by dot symbol.
-fn identifier<'a, T>(input: T) -> IResult<T, ::std::vec::Vec<&'a str>>
+fn identifier<'a, T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputLength + InputTake + InputTakeAtPosition,
     T: Offset + AtEof + AsBytes + 'a,
+    T: Compare<&'static str>,
     T: Clone,
     <T as InputIter>::Item: AsChar + Clone,
     <T as InputTakeAtPosition>::Item: AsChar,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    separated_list!(input, char!('.'), simple_identifier)
+    recognize!(input, alt!(
+        value!((), double_quoted_string) |
+        value!((), separated_list!(char!('.'), simple_identifier))
+    ))
 }
 
 fn take_until_closing_triple_quotes<T>(input: T) -> IResult<T, T>
@@ -185,14 +198,7 @@ where
     <T as InputIter>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    recognize!(input,
-        do_parse!(
-            alt!(tag!("#") | tag!("//")) >>
-            not_line_ending >>
-            alt!(eol | eof!()) >>
-            (())
-        )
-    )
+    recognize!(input, do_parse!(alt!(tag!("#") | tag!("//")) >> not_line_ending >> alt!(eol | eof!()) >> (())))
 }
 
 /// The parser consume single empty line or a comment line,
@@ -213,30 +219,22 @@ where
 /// Array elements are be separated by a comma or EOL.
 /// The rest of empty and comment lines must be ignored.
 fn parse_array_separator<T>(input: T) -> IResult<T, T>
-    where
-        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-        T: InputIter + InputLength + InputTake + InputTakeAtPosition,
-        T: Offset + AtEof + Clone + Copy + PartialEq,
-        T: Compare<&'static str>,
-        <T as InputIter>::Item: AsChar + Clone,
-        <T as InputIter>::RawItem: AsChar + Clone,
-        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + AtEof + Clone + Copy + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
-    recognize!(input,
+    recognize!(
+        input,
         pair!(
             space0,
             alt!(
-                do_parse!(
-                    pair!(tag!(","), space0) >>
-                    many0!(parse_empty_line) >>
-                    (())
-                ) |
-                do_parse!(
-                    many1!(parse_empty_line) >>
-                    opt!(pair!(tag!(","), space0)) >>
-                    many0!(parse_empty_line) >>
-                    (())
-                )
+                do_parse!(pair!(tag!(","), space0) >> many0!(parse_empty_line) >> (()))
+                    | do_parse!(many1!(parse_empty_line) >> opt!(pair!(tag!(","), space0)) >> many0!(parse_empty_line) >> (()))
             )
         )
     )
@@ -255,24 +253,15 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    recognize!(input, do_parse!(
-        tag!("[") >>
-        pair!(space0, many0!(parse_empty_line)) >>
-        opt!(
-            do_parse!(
-                separated_list!(
-                    parse_array_separator,
-                    parse_value
-                ) >>
-                space0 >>
-                opt!(parse_array_separator) >>
-                space0 >>
-                (())
-            )
-        ) >>
-        tag!("]") >>
-        (())
-    ))
+    recognize!(
+        input,
+        do_parse!(
+            tag!("[") >> pair!(space0, many0!(parse_empty_line))
+                >> opt!(do_parse!(
+                    separated_list!(parse_array_separator, parse_value) >> space0 >> opt!(parse_array_separator) >> space0 >> (())
+                )) >> tag!("]") >> (())
+        )
+    )
 }
 
 /// HOCON format allows a user specify multiple arrays using two or more consecutive
@@ -291,17 +280,8 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    recognize!(input,
-        many1!(
-            do_parse!(
-                parse_array >>
-                space0 >>
-                (())
-            )
-        )
-    )
+    recognize!(input, many1!(do_parse!(parse_array >> space0 >> (()))))
 }
-
 
 fn parse_value<T>(input: T) -> IResult<T, T>
 where
@@ -314,11 +294,7 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    alt!(input,
-        parse_arrays |
-        parse_object |
-        any_value
-    )
+    alt!(input, parse_arrays | parse_object | any_value)
 }
 
 fn parse_object<T>(input: T) -> IResult<T, T>
@@ -332,84 +308,53 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    delimited!(input,
-        tag!("{"),
-        parse_object_body,
-        tag!("}")
-    )
+    delimited!(input, tag!("{"), parse_object_body, tag!("}"))
 }
 
 fn parse_object_body<T>(input: T) -> IResult<T, T>
-    where
-        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-        T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
-        T: AtEof,
-        T: Clone + Copy + PartialEq,
-        T: Compare<&'static str>,
-        <T as InputIter>::Item: AsChar + Clone,
-        <T as InputTakeAtPosition>::Item: AsChar + Clone,
-        <T as InputIter>::RawItem: AsChar + Clone,
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
+    T: AtEof,
+    T: Clone + Copy + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
 {
-    recognize!(input, do_parse!(
-        pair!(space0, many0!(parse_empty_line)) >>
-        opt!(
-            do_parse!(
-                separated_list!(
-                    parse_array_separator,
-                    parse_field_or_include
-                ) >>
-                space0 >>
-                opt!(parse_array_separator) >>
-                space0 >>
-                (())
-            )
-        ) >>
-        (())
-    ))
+    recognize!(
+        input,
+        do_parse!(
+            pair!(space0, many0!(parse_empty_line))
+                >> opt!(do_parse!(
+                    separated_list!(parse_array_separator, parse_field_or_include) >> space0 >> opt!(parse_array_separator) >> space0 >> (())
+                )) >> (())
+        )
+    )
 }
 
 fn parse_include<T>(input: T) -> IResult<T, T>
-    where
-        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-        T: InputIter + InputLength + InputTake + InputTakeAtPosition,
-        T: Offset + Copy + AtEof + AsBytes + PartialEq,
-        T: Compare<&'static str>,
-        <T as InputIter>::Item: AsChar + Clone,
-        <T as InputIter>::RawItem: AsChar + Clone,
-        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + Copy + AtEof + AsBytes + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
-    recognize!(input, do_parse!(
-        tag!("include") >>
-        space >>
-        alt!(
-            value!((), double_quoted_string) |
-            do_parse!(
-                tag!("url(") >>
-                space0 >>
-                double_quoted_string >>
-                space0 >>
-                tag!(")") >>
-                (())
-            ) |
-            do_parse!(
-                tag!("file(") >>
-                space0 >>
-                double_quoted_string >>
-                space0 >>
-                tag!(")") >>
-                (())
-            ) |
-            do_parse!(
-                tag!("classpath(") >>
-                space0 >>
-                double_quoted_string >>
-                space0 >>
-                tag!(")") >>
-                (())
-            )
-        ) >>
-        (())
-    ))
+    recognize!(
+        input,
+        do_parse!(
+            tag!("include") >> space
+                >> alt!(
+                    value!((), double_quoted_string)
+                        | do_parse!(tag!("url(") >> space0 >> double_quoted_string >> space0 >> tag!(")") >> (()))
+                        | do_parse!(tag!("file(") >> space0 >> double_quoted_string >> space0 >> tag!(")") >> (()))
+                        | do_parse!(tag!("classpath(") >> space0 >> double_quoted_string >> space0 >> tag!(")") >> (()))
+                ) >> (())
+        )
+    )
 }
 
 fn parse_field_or_include<T>(input: T) -> IResult<T, T>
@@ -422,12 +367,7 @@ where
     <T as InputIter>::RawItem: AsChar + Clone,
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
-    recognize!(input,
-        alt!(
-            parse_include |
-            parse_field
-        )
-    )
+    recognize!(input, alt!(parse_include | parse_field))
 }
 
 fn parse_field<T>(input: T) -> IResult<T, T>
@@ -440,25 +380,13 @@ where
     <T as InputIter>::RawItem: AsChar + Clone,
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
-    recognize!(input,
-        do_parse!(
-            identifier >>
-            space0 >>
-            alt!(
-                recognize!(do_parse!(
-                    alt!(tag!(":") | tag!("=")) >>
-                    space0 >>
-                    parse_value >>
-                    (())
-                )) |
-                parse_object
-            ) >>
-            (())
-        )
+    recognize!(
+        input,
+        do_parse!(identifier >> space0 >> alt!(recognize!(do_parse!(alt!(tag!(":") | tag!("=")) >> space0 >> parse_value >> (()))) | parse_object) >> (()))
     )
 }
 
-fn parse_root<T>(input: T) -> IResult<T, T>
+fn parse_root<T>(input: T) -> IResult<T, Config>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputLength + InputTake + InputTakeAtPosition,
@@ -468,17 +396,22 @@ where
     <T as InputIter>::RawItem: AsChar + Clone,
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
-    recognize!(input,
+    let obj = BTreeMap::<String, Config>::new();
+    let res = Config::Object(obj);
+
+    let parse_res = recognize!(input,
         do_parse!(
             pair!(space0, many0!(parse_empty_line)) >>
-            alt!(
-                parse_object |
-                parse_object_body
-            ) >>
+            alt!(parse_object | parse_object_body) >>
             pair!(space0, many0!(parse_empty_line)) >>
             (())
         )
-    )
+    );
+
+    match parse_res {
+        Ok((next, _)) => Ok((next, res)),
+        Err(cause) => Err(cause)
+    }
 }
 
 #[cfg(test)]
@@ -490,29 +423,21 @@ mod tests {
 
     #[test]
     fn test_parse_root() {
-        assert_eq!(parse_root(CompleteStr("\nroot.key=123\n")), Ok((CompleteStr(""), CompleteStr("\nroot.key=123\n"))));
-        assert_eq!(parse_root(CompleteStr("\n{root.key=123}\n")), Ok((CompleteStr(""), CompleteStr("\n{root.key=123}\n"))));
+        assert!(parse_root(CompleteStr("\nroot.key=123\n")).is_ok());
+        assert!(parse_root(CompleteStr("\n{root.key=123}\n")).is_ok());
     }
 
     #[test]
     fn test_parse_object() {
-        assert_eq!(
-            parse_object(CompleteStr("{\t}")),
-            Ok((CompleteStr(""), CompleteStr("\t")))
-        );
-
-        assert_eq!(
-            parse_object(CompleteStr("{value=value}")),
-            Ok((CompleteStr(""), CompleteStr("value=value")))
-        );
-
+        assert_eq!(parse_object(CompleteStr("{\t}")), Ok((CompleteStr(""), CompleteStr("\t"))));
+        assert_eq!(parse_object(CompleteStr("{value=value}")), Ok((CompleteStr(""), CompleteStr("value=value"))));
         assert_eq!(
             parse_object(CompleteStr("{key1=value1,key2=value2\nkey3=value3}")),
             Ok((CompleteStr(""), CompleteStr("key1=value1,key2=value2\nkey3=value3")))
         );
-
         assert_eq!(
-            parse_object(CompleteStr(r#"{
+            parse_object(CompleteStr(
+                r#"{
                 key1.subkey = value1
                 # comment line
 
@@ -527,8 +452,12 @@ mod tests {
                     {subsub.key=123}
                     ]
                 }
-            }"#)),
-            Ok((CompleteStr(""), CompleteStr(r#"
+            }"#
+            )),
+            Ok((
+                CompleteStr(""),
+                CompleteStr(
+                    r#"
                 key1.subkey = value1
                 # comment line
 
@@ -543,50 +472,62 @@ mod tests {
                     {subsub.key=123}
                     ]
                 }
-            "#)))
+            "#
+                )
+            ))
         );
     }
 
     #[test]
     fn test_parse_array_separator() {
         // first alternative
-        assert_eq!(parse_array_separator(CompleteStr(",")),
-                   Ok((CompleteStr(""), CompleteStr(","))));
-        assert_eq!(parse_array_separator(CompleteStr("  ,  ")),
-                   Ok((CompleteStr(""), CompleteStr("  ,  "))));
-        assert_eq!(parse_array_separator(CompleteStr(",\n  ")),
-                   Ok((CompleteStr(""), CompleteStr(",\n  "))));
-        assert_eq!(parse_array_separator(CompleteStr(",#comment\n  ")),
-                   Ok((CompleteStr(""), CompleteStr(",#comment\n  "))));
-        assert_eq!(parse_array_separator(CompleteStr(",#comment\n")),
-                   Ok((CompleteStr(""), CompleteStr(",#comment\n"))));
-        assert_eq!(parse_array_separator(CompleteStr(",#comment")),
-                   Ok((CompleteStr(""), CompleteStr(",#comment"))));
-        assert_eq!(parse_array_separator(CompleteStr(",#comment1\n\n#comment2\n")),
-                   Ok((CompleteStr(""), CompleteStr(",#comment1\n\n#comment2\n"))));
-        assert_eq!(parse_array_separator(CompleteStr(",#comment1\n\n#comment2\n,")),
-                   Ok((CompleteStr(","), CompleteStr(",#comment1\n\n#comment2\n"))));
+        assert_eq!(parse_array_separator(CompleteStr(",")), Ok((CompleteStr(""), CompleteStr(","))));
+        assert_eq!(parse_array_separator(CompleteStr("  ,  ")), Ok((CompleteStr(""), CompleteStr("  ,  "))));
+        assert_eq!(parse_array_separator(CompleteStr(",\n  ")), Ok((CompleteStr(""), CompleteStr(",\n  "))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment\n  ")), Ok((CompleteStr(""), CompleteStr(",#comment\n  "))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment\n")), Ok((CompleteStr(""), CompleteStr(",#comment\n"))));
+        assert_eq!(parse_array_separator(CompleteStr(",#comment")), Ok((CompleteStr(""), CompleteStr(",#comment"))));
+        assert_eq!(
+            parse_array_separator(CompleteStr(",#comment1\n\n#comment2\n")),
+            Ok((CompleteStr(""), CompleteStr(",#comment1\n\n#comment2\n")))
+        );
+        assert_eq!(
+            parse_array_separator(CompleteStr(",#comment1\n\n#comment2\n,")),
+            Ok((CompleteStr(","), CompleteStr(",#comment1\n\n#comment2\n")))
+        );
 
         // second alternative
-        assert_eq!(parse_array_separator(CompleteStr("#comment\n")),
-                   Ok((CompleteStr(""), CompleteStr("#comment\n"))));
-        assert_eq!(parse_array_separator(CompleteStr("\n")),
-                   Ok((CompleteStr(""), CompleteStr("\n"))));
-        assert_eq!(parse_array_separator(CompleteStr("\n\n \n")),
-                   Ok((CompleteStr(""), CompleteStr("\n\n \n"))));
-        assert_eq!(parse_array_separator(CompleteStr("\n\n \n ,")),
-                   Ok((CompleteStr(""), CompleteStr("\n\n \n ,"))));
-        assert_eq!(parse_array_separator(CompleteStr("\n\n,#comment1\n\n#comment2\n")),
-                   Ok((CompleteStr(""), CompleteStr("\n\n,#comment1\n\n#comment2\n"))));
-        assert_eq!(parse_array_separator(CompleteStr("\n\n,#comment1\n,\n#comment2\n")),
-                   Ok((CompleteStr(",\n#comment2\n"), CompleteStr("\n\n,#comment1\n"))));
+        assert_eq!(parse_array_separator(CompleteStr("#comment\n")), Ok((CompleteStr(""), CompleteStr("#comment\n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n")), Ok((CompleteStr(""), CompleteStr("\n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n\n \n")), Ok((CompleteStr(""), CompleteStr("\n\n \n"))));
+        assert_eq!(parse_array_separator(CompleteStr("\n\n \n ,")), Ok((CompleteStr(""), CompleteStr("\n\n \n ,"))));
+        assert_eq!(
+            parse_array_separator(CompleteStr("\n\n,#comment1\n\n#comment2\n")),
+            Ok((CompleteStr(""), CompleteStr("\n\n,#comment1\n\n#comment2\n")))
+        );
+        assert_eq!(
+            parse_array_separator(CompleteStr("\n\n,#comment1\n,\n#comment2\n")),
+            Ok((CompleteStr(",\n#comment2\n"), CompleteStr("\n\n,#comment1\n")))
+        );
     }
 
     #[test]
     fn test_parse_comment() {
-        assert_eq!(parse_comment(CompleteStr("#comment\n")), Ok((CompleteStr(""), CompleteStr("#comment\n"))), "should parse comment line");
-        assert_eq!(parse_comment(CompleteStr("#comment")), Ok( (CompleteStr(""), CompleteStr("#comment"))), "should parse comment if it is the last line in a file");
-        assert_eq!(parse_comment(CompleteStr("//comment\n")), Ok( (CompleteStr(""), CompleteStr("//comment\n"))), "should parse comment which starts with // sequence");
+        assert_eq!(
+            parse_comment(CompleteStr("#comment\n")),
+            Ok((CompleteStr(""), CompleteStr("#comment\n"))),
+            "should parse comment line"
+        );
+        assert_eq!(
+            parse_comment(CompleteStr("#comment")),
+            Ok((CompleteStr(""), CompleteStr("#comment"))),
+            "should parse comment if it is the last line in a file"
+        );
+        assert_eq!(
+            parse_comment(CompleteStr("//comment\n")),
+            Ok((CompleteStr(""), CompleteStr("//comment\n"))),
+            "should parse comment which starts with // sequence"
+        );
     }
 
     #[test]
@@ -597,7 +538,10 @@ mod tests {
         assert_eq!(parse_array(CompleteStr("[#comment\n\n1\n]")), Ok((CompleteStr(""), CompleteStr("[#comment\n\n1\n]"))));
         assert_eq!(parse_array(CompleteStr("[1,\"1222\",1]")), Ok((CompleteStr(""), CompleteStr("[1,\"1222\",1]"))));
         assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""), CompleteStr("[ 1 , 1 , 1 ]"))));
-        assert_eq!(parse_array(CompleteStr("[ 1 , \"1\" , 1 asd , ]")), Ok((CompleteStr(""), CompleteStr("[ 1 , \"1\" , 1 asd , ]"))));
+        assert_eq!(
+            parse_array(CompleteStr("[ 1 , \"1\" , 1 asd , ]")),
+            Ok((CompleteStr(""), CompleteStr("[ 1 , \"1\" , 1 asd , ]")))
+        );
         assert_eq!(parse_array(CompleteStr("[ 1 \n 1 \r\n 1 ]")), Ok((CompleteStr(""), CompleteStr("[ 1 \n 1 \r\n 1 ]"))));
     }
 
@@ -606,7 +550,10 @@ mod tests {
         assert_eq!(parse_arrays(CompleteStr("[1,2,3]")), Ok((CompleteStr(""), CompleteStr("[1,2,3]"))));
         assert_eq!(parse_arrays(CompleteStr("[1,2,3][3,2,1]")), Ok((CompleteStr(""), CompleteStr("[1,2,3][3,2,1]"))));
         assert_eq!(parse_arrays(CompleteStr("[1,2,3] [3,2,1]")), Ok((CompleteStr(""), CompleteStr("[1,2,3] [3,2,1]"))));
-        assert_eq!(parse_arrays(CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]")), Ok((CompleteStr(""), CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]"))));
+        assert_eq!(
+            parse_arrays(CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]")),
+            Ok((CompleteStr(""), CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]")))
+        );
     }
 
     #[test]
@@ -616,15 +563,9 @@ mod tests {
             Ok((CompleteStr(""), CompleteStr("some value"))),
             "supports basic values"
         );
-        assert_eq!(
-            any_value(CompleteStr(" some value")),
-            Ok((CompleteStr(""), CompleteStr(" some value"))));
-        assert_eq!(
-            any_value(CompleteStr("  some value  ")),
-            Ok((CompleteStr(""), CompleteStr("  some value  "))));
-        assert_eq!(
-            any_value(CompleteStr(" some value # comment")),
-            Ok((CompleteStr("# comment"), CompleteStr(" some value "))));
+        assert_eq!(any_value(CompleteStr(" some value")), Ok((CompleteStr(""), CompleteStr(" some value"))));
+        assert_eq!(any_value(CompleteStr("  some value  ")), Ok((CompleteStr(""), CompleteStr("  some value  "))));
+        assert_eq!(any_value(CompleteStr(" some value # comment")), Ok((CompleteStr("# comment"), CompleteStr(" some value "))));
         assert_eq!(
             any_value(CompleteStr("some value // comment")),
             Ok((CompleteStr("// comment"), CompleteStr("some value "))),
@@ -769,12 +710,12 @@ mod tests {
     fn parse_identifier() {
         assert_eq!(
             identifier(CompleteStr(&"key")),
-            Ok((CompleteStr(&""), vec!["key"])),
+            Ok((CompleteStr(&""), CompleteStr("key"))),
             "identifier function can parse a simple identifier"
         );
         assert_eq!(
             identifier(CompleteStr(&"key1.key2")),
-            Ok((CompleteStr(&""), vec!["key1", "key2"])),
+            Ok((CompleteStr(&""), CompleteStr("key1.key2"))),
             "identifier function can parse a composite identifier"
         );
     }
