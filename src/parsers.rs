@@ -4,8 +4,9 @@ use std::ops::{Range, RangeFrom, RangeTo};
 use std::str;
 
 use nom::{
-    alpha, alphanumeric, eol, need_more, not_line_ending, recognize_float, space, space0, AsBytes, AsChar, AtEof, Compare, CompareResult, IResult, InputIter, InputLength, InputTake,
-    InputTakeAtPosition, Needed, Offset, Slice,
+    alpha, alphanumeric, eol, need_more, not_line_ending, recognize_float, space, space0,
+    AsBytes, AsChar, AtEof, Compare, CompareResult, IResult, InputIter, InputLength, InputTake,
+    InputTakeAtPosition, FindToken, Needed, Offset, Slice,
 };
 
 
@@ -110,12 +111,11 @@ where
 fn string_value<T>(input: T) -> IResult<T, T>
 where
     T: InputIter + InputLength + InputTake,
-    T: AtEof,
+    T: Clone + AtEof,
     T: Compare<&'static str>,
     <T as InputIter>::Item: AsChar,
-    T: Clone,
 {
-    alt_complete!(input, triple_quoted_string | double_quoted_string)
+    alt!(input, triple_quoted_string | double_quoted_string)
 }
 
 /// The parser consumes any value provided, including sub-strings. And it terminates
@@ -160,8 +160,8 @@ where
                 Err(nom::Err::Incomplete(needed)) => {
                     return need_more(input, needed);
                 }
-                Err(err) => {
-                    return Err(err);
+                err => {
+                    return err;
                 }
             }
         }
@@ -198,14 +198,14 @@ where
 /// The parser consume single empty line or a comment line,
 /// including trailing spaces.
 fn parse_empty_line<T>(input: T) -> IResult<T, T>
-    where
-        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
-        T: InputIter + InputLength + InputTake + InputTakeAtPosition,
-        T: Offset + Copy + AtEof,
-        T: Compare<&'static str>,
-        <T as InputIter>::Item: AsChar + Clone,
-        <T as InputIter>::RawItem: AsChar + Clone,
-        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + Copy + AtEof,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
 {
     recognize!(input, pair!(alt!(eol | parse_comment), space0))
 }
@@ -244,7 +244,7 @@ fn parse_array_separator<T>(input: T) -> IResult<T, T>
 
 /// Parsers array of values.
 /// An array can be empty, it can contain single element.
-fn parse_array<T>(input: T) -> IResult<T, ()>
+fn parse_array<T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
@@ -255,9 +255,9 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    do_parse!(input,
+    recognize!(input, do_parse!(
         tag!("[") >>
-        space0 >>
+        pair!(space0, many0!(parse_empty_line)) >>
         opt!(
             do_parse!(
                 separated_list!(
@@ -272,7 +272,7 @@ where
         ) >>
         tag!("]") >>
         (())
-    )
+    ))
 }
 
 /// HOCON format allows a user specify multiple arrays using two or more consecutive
@@ -280,7 +280,7 @@ where
 ///
 /// Here I slightly weaken requirements and allow a user to define multiple arrays if the second
 /// array begins on the same line on which the first array ended.
-fn parse_arrays<T>(input: T) -> IResult<T, ()>
+fn parse_arrays<T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
@@ -291,7 +291,7 @@ where
     <T as InputTakeAtPosition>::Item: AsChar + Clone,
     <T as InputIter>::RawItem: AsChar + Clone,
 {
-    value!(input, (),
+    recognize!(input,
         many1!(
             do_parse!(
                 parse_array >>
@@ -303,7 +303,7 @@ where
 }
 
 
-fn parse_value<T>(input: T) -> IResult<T, ()>
+fn parse_value<T>(input: T) -> IResult<T, T>
 where
     T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
     T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
@@ -316,7 +316,83 @@ where
 {
     alt!(input,
         parse_arrays |
-        value!((), any_value)
+        parse_object |
+        any_value
+    )
+}
+
+fn parse_object<T>(input: T) -> IResult<T, T>
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
+    T: AtEof,
+    T: Clone + Copy + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+{
+    delimited!(input,
+        tag!("{"),
+        parse_object_body,
+        tag!("}")
+    )
+}
+
+fn parse_object_body<T>(input: T) -> IResult<T, T>
+    where
+        T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+        T: InputIter + InputLength + InputTake + InputTakeAtPosition + AsBytes + Offset,
+        T: AtEof,
+        T: Clone + Copy + PartialEq,
+        T: Compare<&'static str>,
+        <T as InputIter>::Item: AsChar + Clone,
+        <T as InputTakeAtPosition>::Item: AsChar + Clone,
+        <T as InputIter>::RawItem: AsChar + Clone,
+{
+    recognize!(input, do_parse!(
+        pair!(space0, many0!(parse_empty_line)) >>
+        opt!(
+            do_parse!(
+                separated_list!(
+                    parse_array_separator,
+                    parse_field
+                ) >>
+                space0 >>
+                opt!(parse_array_separator) >>
+                space0 >>
+                (())
+            )
+        ) >>
+        (())
+    ))
+}
+
+fn parse_field<T>(input: T) -> IResult<T, T>
+where
+    T: Slice<Range<usize>> + Slice<RangeFrom<usize>> + Slice<RangeTo<usize>>,
+    T: InputIter + InputLength + InputTake + InputTakeAtPosition,
+    T: Offset + Copy + AtEof + AsBytes + PartialEq,
+    T: Compare<&'static str>,
+    <T as InputIter>::Item: AsChar + Clone,
+    <T as InputIter>::RawItem: AsChar + Clone,
+    <T as InputTakeAtPosition>::Item: AsChar + Clone,
+{
+    recognize!(input,
+        do_parse!(
+            identifier >>
+            space0 >>
+            alt!(
+                recognize!(do_parse!(
+                    alt!(tag!(":") | tag!("=")) >>
+                    space0 >>
+                    parse_value >>
+                    (())
+                )) |
+                parse_object
+            ) >>
+            (())
+        )
     )
 }
 
@@ -326,6 +402,55 @@ mod tests {
     use super::*;
     use nom;
     use nom::types::CompleteStr;
+
+    #[test]
+    fn test_parse_object() {
+        assert_eq!(
+            parse_object(CompleteStr("{\t}")),
+            Ok((CompleteStr(""), CompleteStr("\t")))
+        );
+
+        assert_eq!(
+            parse_object(CompleteStr("{value=value}")),
+            Ok((CompleteStr(""), CompleteStr("value=value")))
+        );
+
+        assert_eq!(
+            parse_object(CompleteStr("{key1=value1,key2=value2\nkey3=value3}")),
+            Ok((CompleteStr(""), CompleteStr("key1=value1,key2=value2\nkey3=value3")))
+        );
+
+        assert_eq!(
+            parse_object(CompleteStr(r#"{
+                key1.subkey = value1
+                # comment line
+
+                key2 : value2
+                key3=value3
+                key4 {
+                    subkey2 = [1, 2
+                    # sub comment
+                    4
+                    {subsub.key=123}
+                    ]
+                }
+            }"#)),
+            Ok((CompleteStr(""), CompleteStr(r#"
+                key1.subkey = value1
+                # comment line
+
+                key2 : value2
+                key3=value3
+                key4 {
+                    subkey2 = [1, 2
+                    # sub comment
+                    4
+                    {subsub.key=123}
+                    ]
+                }
+            "#)))
+        );
+    }
 
     #[test]
     fn test_parse_array_separator() {
@@ -371,21 +496,22 @@ mod tests {
 
     #[test]
     fn test_parse_array() {
-        assert_eq!(parse_array(CompleteStr("[]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[ ]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[ 1 ]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[1,\"1222\",1]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[ 1 , \"1\" , 1 asd , ]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_array(CompleteStr("[ 1 \n 1 \r\n 1 ]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_array(CompleteStr("[]")), Ok((CompleteStr(""), CompleteStr("[]"))));
+        assert_eq!(parse_array(CompleteStr("[ ]")), Ok((CompleteStr(""), CompleteStr("[ ]"))));
+        assert_eq!(parse_array(CompleteStr("[ 1 ]")), Ok((CompleteStr(""), CompleteStr("[ 1 ]"))));
+        assert_eq!(parse_array(CompleteStr("[#comment\n\n1\n]")), Ok((CompleteStr(""), CompleteStr("[#comment\n\n1\n]"))));
+        assert_eq!(parse_array(CompleteStr("[1,\"1222\",1]")), Ok((CompleteStr(""), CompleteStr("[1,\"1222\",1]"))));
+        assert_eq!(parse_array(CompleteStr("[ 1 , 1 , 1 ]")), Ok((CompleteStr(""), CompleteStr("[ 1 , 1 , 1 ]"))));
+        assert_eq!(parse_array(CompleteStr("[ 1 , \"1\" , 1 asd , ]")), Ok((CompleteStr(""), CompleteStr("[ 1 , \"1\" , 1 asd , ]"))));
+        assert_eq!(parse_array(CompleteStr("[ 1 \n 1 \r\n 1 ]")), Ok((CompleteStr(""), CompleteStr("[ 1 \n 1 \r\n 1 ]"))));
     }
 
     #[test]
     fn test_parse_arrays() {
-        assert_eq!(parse_arrays(CompleteStr("[1,2,3]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_arrays(CompleteStr("[1,2,3][3,2,1]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_arrays(CompleteStr("[1,2,3] [3,2,1]")), Ok((CompleteStr(""), ())));
-        assert_eq!(parse_arrays(CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]")), Ok((CompleteStr(""), ())));
+        assert_eq!(parse_arrays(CompleteStr("[1,2,3]")), Ok((CompleteStr(""), CompleteStr("[1,2,3]"))));
+        assert_eq!(parse_arrays(CompleteStr("[1,2,3][3,2,1]")), Ok((CompleteStr(""), CompleteStr("[1,2,3][3,2,1]"))));
+        assert_eq!(parse_arrays(CompleteStr("[1,2,3] [3,2,1]")), Ok((CompleteStr(""), CompleteStr("[1,2,3] [3,2,1]"))));
+        assert_eq!(parse_arrays(CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]")), Ok((CompleteStr(""), CompleteStr("[[1,2,3], [4,5,6],] [3,2,1]"))));
     }
 
     #[test]
