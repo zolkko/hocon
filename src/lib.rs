@@ -4,6 +4,8 @@
 #[macro_use]
 extern crate nom;
 
-mod config;
+#[macro_use]
+pub mod macros;
+pub mod config;
 pub mod mem;
-mod parsers;
+pub mod parsers;
