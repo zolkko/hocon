@@ -9,3 +9,4 @@ pub mod macros;
 pub mod config;
 pub mod mem;
 pub mod parsers;
+pub mod config_factory;

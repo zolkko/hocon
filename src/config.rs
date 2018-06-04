@@ -1,4 +1,22 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+pub enum Include {
+    Any(String),
+    Url(String),
+    Classpath(String),
+    File(String)
+}
+
+pub struct IncludeError {
+}
+
+pub type IncludeResult = Result<Config, IncludeError>;
+
+
+pub struct ParseError {
+}
+
+pub type ParseResult = Result<Config, ParseError>;
 
 
 /// Representation of a Hocon value.
