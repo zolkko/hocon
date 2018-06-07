@@ -14,7 +14,7 @@ use combine::*;
 /// Substitutions inside a Hocon file can be either required `${required}`
 /// or optional `${?optional.key}`.
 /// If required substitution is not found in the context the parser should fail.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Substitution {
     Required(Vec<String>),
     Optional(Vec<String>)
@@ -225,7 +225,7 @@ where
     ))
 }
 
-/// Hocon allow to address objects' sub-fields though dot notation.
+/// Hocon allows to address objects' sub-fields though dot notation.
 fn identifiers<I>() -> impl Parser<Input = I, Output = Vec<String>>
 where
     I: Stream<Item = char>,
@@ -234,6 +234,8 @@ where
     sep_by1(identifier(), token('.'))
 }
 
+/// A user can place substitutions of `${required}` and `${?optional}` forms inside
+/// fields' values.
 fn substitution<I>() -> impl Parser<Input = I, Output = Substitution>
 where
     I: Stream<Item = char>,
@@ -548,5 +550,17 @@ mod tests {
 
         assert_eq!(identifiers().parse("i"), Ok((vec!["i".into()], "")));
         assert_eq!(identifiers().parse("key.sub"), Ok((vec!["key".into(), "sub".into()], "")));
+    }
+
+    #[test]
+    fn test_substitution() {
+        assert!(substitution().parse("${}").is_err());
+        assert!(substitution().parse("${ }").is_err());
+
+        assert_eq!(substitution().parse("${ x }"), Ok((Substitution::Required(vec!["x".into()]), "")));
+        assert_eq!(substitution().parse("${i1.i2}"), Ok((Substitution::Required(vec!["i1".into(), "i2".into()]), "")));
+
+        assert_eq!(substitution().parse("${? x }"), Ok((Substitution::Optional(vec!["x".into()]), "")));
+        assert_eq!(substitution().parse("${?i1.i2}"), Ok((Substitution::Optional(vec!["i1".into(), "i2".into()]), "")));
     }
 }
