@@ -127,6 +127,9 @@ where
     ws0().skip(skip_many(empty_line()))
 }
 
+/// The separator is a comma or a newline symbol, used to separate elements of an array
+/// or fields of an object.
+/// All additional whitespaces, comments and newlines must be ignored.
 fn separator<I>() -> impl Parser<Input = I, Output = ()>
 where
     I: Stream<Item = char>,
@@ -146,6 +149,22 @@ where
     ws0().with(first_alt.or(second_alt))
 }
 
+/// The function escapes a character inside a Hocon string
+fn escape_char(c: char) -> Option<char> {
+    Some(match c {
+        '"' => '"',
+        '\\' => '\\',
+        '/' => '/',
+        'b' => '\u{0008}',
+        'f' => '\u{000c}',
+        'n' => '\n',
+        'r' => '\r',
+        't' => '\t',
+        _ => return None,
+    })
+}
+
+/// The parser recognizes enquoted string and return it's escaped content.
 fn double_string<I>() -> impl Parser<Input = I, Output = String>
 where
     I: Stream<Item = char>,
@@ -154,23 +173,12 @@ where
     let char_in_string = parser(|input: &mut I| {
         let (c, next) = try!(any().parse_lazy(input).into());
 
-        let mut back_slash_char = satisfy_map(|c| {
-            Some(match c {
-                '"' => '"',
-                '\\' => '\\',
-                '/' => '/',
-                'b' => '\u{0008}',
-                'f' => '\u{000c}',
-                'n' => '\n',
-                'r' => '\r',
-                't' => '\t',
-                _ => return None,
-            })
-        });
+        let mut back_slash_char = satisfy_map(escape_char);
 
         match c {
             '\\' => next.combine(|_| back_slash_char.parse_stream(input)),
             '"' => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
+            '\r' | '\n' => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
             _ => Ok((c, next)),
         }
     });
@@ -178,7 +186,8 @@ where
     between(token('"'), token('"'), many(char_in_string))
 }
 
-fn triple_quoted_string<I>() -> impl Parser<Input = I, Output=String>
+/// The parser recognizes triple quoted strings as in Python and Scala.
+fn triple_quoted_string<I>() -> impl Parser<Input = I, Output = String>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
@@ -186,19 +195,7 @@ where
     let char_in_triple_string = parser(|input: &mut I| {
         let (c, next) = try!(any().parse_lazy(input).into());
 
-        let mut back_slash_char = satisfy_map(|c| {
-            Some(match c {
-                '"' => '"',
-                '\\' => '\\',
-                '/' => '/',
-                'b' => '\u{0008}',
-                'f' => '\u{000c}',
-                'n' => '\n',
-                'r' => '\r',
-                't' => '\t',
-                _ => return None,
-            })
-        });
+        let mut back_slash_char = satisfy_map(escape_char);
 
         match c {
             '\\' => next.combine(|_| back_slash_char.parse_stream(input)),
@@ -215,6 +212,8 @@ where
     between(try(string("\"\"\"")), string("\"\"\""), many(char_in_triple_string))
 }
 
+/// Recognizes an identifier. The first character of an identifier starts with letter and
+/// later characters can be letters, digits, underscores etc.
 fn identifier<I>() -> impl Parser<Input = I, Output = String>
 where
     I: Stream<Item = char>,
@@ -226,23 +225,13 @@ where
     ))
 }
 
+/// Hocon allow to address objects' sub-fields though dot notation.
 fn identifiers<I>() -> impl Parser<Input = I, Output = Vec<String>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     sep_by1(identifier(), token('.'))
-}
-
-fn field_name<I>() -> impl Parser<Input = I, Output = Vec<String>>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    choice((
-        double_string().map(|x| vec![x]),
-        identifiers()
-    ))
 }
 
 fn substitution<I>() -> impl Parser<Input = I, Output = Substitution>
@@ -299,6 +288,17 @@ where
             between(string("classpath").skip(ws0()), token(')').skip(ws0()), double_string()).map(|s: String| Include::Classpath(s)),
         ))
     )
+}
+
+fn field_name<I>() -> impl Parser<Input = I, Output = Vec<String>>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    choice((
+        double_string().map(|x| vec![x]),
+        identifiers()
+    ))
 }
 
 fn field<I>() -> impl Parser<Input = I, Output = Field>
@@ -417,4 +417,136 @@ where
             object_body()
         ))
     ).skip(empty_lines())
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_ws() {
+        assert_eq!(ws().parse(" "), Ok(((), "")));
+        assert_eq!(ws().parse("\t"), Ok(((), "")));
+        assert_eq!(ws().parse("\t\t"), Ok(((), "\t")));
+
+        assert!(ws().parse("").is_err());
+        assert!(ws().parse("\n").is_err());
+    }
+
+    #[test]
+    fn test_ws0() {
+        assert_eq!(ws0().parse(""), Ok(((), "")));
+        assert_eq!(ws0().parse("\t"), Ok(((), "")));
+        assert_eq!(ws0().parse("\t\t"), Ok(((), "")));
+        assert_eq!(ws0().parse("\n"), Ok(((), "\n")));
+    }
+
+    #[test]
+    fn test_comment() {
+        assert_eq!(comment().parse("#comment"), Ok(((), "")));
+        assert_eq!(comment().parse("#comment\n"), Ok(((), "")));
+        assert_eq!(comment().parse("#comment\r\n"), Ok(((), "")));
+        assert_eq!(comment().parse("#comment\nx"), Ok(((), "x")));
+
+        assert_eq!(comment().parse("//comment"), Ok(((), "")));
+        assert_eq!(comment().parse("//comment\n"), Ok(((), "")));
+        assert_eq!(comment().parse("//comment\r\n"), Ok(((), "")));
+        assert_eq!(comment().parse("//comment\nx"), Ok(((), "x")));
+
+        assert!(comment().parse("/x/").is_err());
+    }
+
+    #[test]
+    fn test_empty_line() {
+        assert_eq!(empty_line().parse("\n"), Ok(((), "")));
+        assert_eq!(empty_line().parse("\n\n"), Ok(((), "\n")));
+        assert_eq!(empty_line().parse("\r\n"), Ok(((), "")));
+        assert_eq!(empty_line().parse("#comment"), Ok(((), "")));
+        assert_eq!(empty_line().parse("#comment\n"), Ok(((), "")));
+
+        assert!(empty_line().parse("").is_err());
+    }
+
+    #[test]
+    fn test_empty_lines() {
+        assert_eq!(empty_lines().parse(""), Ok(((), "")));
+        assert_eq!(empty_lines().parse("\t"), Ok(((), "")));
+        assert_eq!(empty_lines().parse("\t#c1\n#c2"), Ok(((), "")));
+        assert_eq!(empty_lines().parse("\t#c1\n#c2\nx"), Ok(((), "x")));
+    }
+
+    #[test]
+    fn test_separator() {
+        assert!(separator().parse("").is_err());
+
+        assert_eq!(separator().parse(","), Ok(((), "")));
+        assert_eq!(separator().parse(",\n"), Ok(((), "")));
+        assert_eq!(separator().parse(",\n#comment"), Ok(((), "")));
+
+        assert_eq!(separator().parse("\n,"), Ok(((), "")));
+        assert_eq!(separator().parse("#comment\n\n,"), Ok(((), "")));
+        assert_eq!(separator().parse("#comment\n\n,\n"), Ok(((), "")));
+        assert_eq!(separator().parse("#comment\n\n,\n#comment"), Ok(((), "")));
+
+        assert_eq!(separator().parse("\n"), Ok(((), "")));
+        assert_eq!(separator().parse("#comment"), Ok(((), "")));
+        assert_eq!(separator().parse("#comment\n"), Ok(((), "")));
+    }
+
+    #[test]
+    fn test_escape_char() {
+        assert_eq!(escape_char('t'), Some('\t'));
+        assert_eq!(escape_char('n'), Some('\n'));
+        assert_eq!(escape_char('r'), Some('\r'));
+        assert_eq!(escape_char('b'), Some('\u{0008}'));
+        assert_eq!(escape_char('f'), Some('\u{000c}'));
+        assert_eq!(escape_char('\\'), Some('\\'));
+        assert_eq!(escape_char('/'), Some('/'));
+        assert_eq!(escape_char('\\'), Some('\\'));
+    }
+
+    #[test]
+    fn test_double_string() {
+        assert!(double_string().parse("").is_err());
+        assert!(double_string().parse("\"").is_err());
+        assert!(double_string().parse("\"x").is_err());
+
+        assert_eq!(double_string().parse("\"xx\""), Ok(("xx".into(), "")));
+        assert!(double_string().parse("\"x\nx\"").is_err());
+    }
+
+    #[test]
+    fn test_triple_quoted_string() {
+        assert_eq!(triple_quoted_string().parse("\"\"\"xx\"\"\""), Ok(("xx".into(), "")));
+        assert_eq!(triple_quoted_string().parse("\"\"\"x\nx\"\"\""), Ok(("x\nx".into(), "")));
+
+        assert!(triple_quoted_string().parse("").is_err());
+        assert!(triple_quoted_string().parse("\"").is_err());
+        assert!(triple_quoted_string().parse("\"\"x").is_err());
+        assert!(triple_quoted_string().parse("\"\"\"x").is_err());
+    }
+
+    #[test]
+    fn test_identifier() {
+        assert_eq!(identifier().parse("i"), Ok(("i".into(), "")));
+        assert_eq!(identifier().parse("i3"), Ok(("i3".into(), "")));
+        assert_eq!(identifier().parse("i3_"), Ok(("i3_".into(), "")));
+        assert_eq!(identifier().parse("i3-"), Ok(("i3-".into(), "")));
+        assert_eq!(identifier().parse("i3$"), Ok(("i3$".into(), "")));
+        assert_eq!(identifier().parse("i3$."), Ok(("i3$".into(), ".")));
+
+        assert!(identifier().parse("").is_err());
+        assert!(identifier().parse("1i").is_err());
+        assert!(identifier().parse(".").is_err());
+    }
+
+    #[test]
+    fn test_identifiers() {
+        assert!(identifiers().parse("").is_err());
+        assert!(identifiers().parse("i1.i2.").is_err());
+
+        assert_eq!(identifiers().parse("i"), Ok((vec!["i".into()], "")));
+        assert_eq!(identifiers().parse("key.sub"), Ok((vec!["key".into(), "sub".into()], "")));
+    }
 }
