@@ -14,7 +14,7 @@ use combine::*;
 /// Substitutions inside a Hocon file can be either required `${required}`
 /// or optional `${?optional.key}`.
 /// If required substitution is not found in the context the parser should fail.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum Substitution {
     Required(Vec<String>),
     Optional(Vec<String>)
@@ -22,7 +22,7 @@ enum Substitution {
 
 /// A user may include another file or url. Included configuration will be
 /// merged into an object in the context.
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 enum Include {
     Any(String),
     Url(String),
@@ -32,7 +32,7 @@ enum Include {
 
 /// Users can go crazy when they define a value of a field.
 /// Thus, each value consists of zero or more value-chunks.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 enum ValueChunk {
     Str(String),
     Variable(Substitution),
@@ -292,6 +292,8 @@ where
     many1(until_line_end)
 }
 
+/// A user can include another configuration file, its fields must be
+/// merged into current object.
 fn include<I>() -> impl Parser<Input = I, Output = Include>
 where
     I: Stream<Item = char>,
@@ -299,10 +301,10 @@ where
 {
     try(string("include")).skip(ws()).skip(ws0()).with(
         choice((
-            double_string().map(|s: String| Include::Any(s)),
-            between(string("url(").skip(ws0()), token(')').skip(ws0()), double_string()).map(|s: String| Include::Url(s)),
-            between(string("file(").skip(ws0()), token(')').skip(ws0()), double_string()).map(|s: String| Include::File(s)),
-            between(string("classpath").skip(ws0()), token(')').skip(ws0()), double_string()).map(|s: String| Include::Classpath(s)),
+            double_string().map(Include::Any),
+            between(string("url(").skip(ws0()), token(')'), double_string().skip(ws0())).map(Include::Url),
+            between(string("file(").skip(ws0()), token(')'), double_string().skip(ws0())).map(Include::File),
+            between(string("classpath(").skip(ws0()), token(')'), double_string().skip(ws0())).map(Include::Classpath),
         ))
     )
 }
@@ -603,5 +605,13 @@ mod tests {
 
         assert_eq!(unquoted_string(UnquotedStringContext::Object).parse("x}"), Ok(("x".into(), "}")));
         assert_eq!(unquoted_string(UnquotedStringContext::Object).parse("x]"), Ok(("x]".into(), "")));
+    }
+
+    #[test]
+    fn test_include() {
+        assert_eq!(include().parse("include \"any\""), Ok((Include::Any("any".into()), "")));
+        assert_eq!(include().parse("include url( \"url\" )"), Ok((Include::Url("url".into()), "")));
+        assert_eq!(include().parse("include file( \"file\" )"), Ok((Include::File("file".into()), "")));
+        assert_eq!(include().parse("include classpath( \"classpath\" )"), Ok((Include::Classpath("classpath".into()), "")));
     }
 }
