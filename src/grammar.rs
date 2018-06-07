@@ -55,6 +55,12 @@ enum Field {
     Inc(Include)
 }
 
+#[derive(Clone, Copy, Debug)]
+enum UnquotedStringContext {
+    Array,
+    Object
+}
+
 /// Discard return type of the parser which was passed as argument to the function.
 fn unit<I>(p: impl Parser<Input = I>) -> impl Parser<Input = I, Output = ()>
 where
@@ -249,15 +255,24 @@ where
     ))
 }
 
-fn unquoted_string<I>() -> impl Parser<Input = I, Output = String>
+/// Hocon format allows a user to omit double-quote symbol when they define a string value.
+/// Because a user can use an unquoted string inside arrays and objects we must
+/// specify the context in argument `ctx`.
+fn unquoted_string<I>(ctx: UnquotedStringContext) -> impl Parser<Input = I, Output = String>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let until_line_end = parser(|input: &mut I| {
+    let end_char = match ctx {
+        UnquotedStringContext::Array => ']',
+        UnquotedStringContext::Object => '}',
+    };
+
+    let until_line_end = parser(move |input: &mut I| {
         let (c, next) = try!(any().parse_lazy(input).into());
         match c {
-            '#' | '\n' | '"' | '[' | '{' => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
+            '#' | '\n' | '"' => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
+            v if v == end_char => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
             '$' => match look_ahead(token('{')).parse_stream(input) {
                 Ok(_) => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
                 Err(_) => Ok((c, next))
@@ -389,7 +404,7 @@ where
 // FIXME: uncomment following line
 //        object().map(|_| ValueChunk::Object),
 //        array().map(|a| ValueChunk::Array(a)),
-        unquoted_string().map(|s| ValueChunk::Str(s))
+        unquoted_string(UnquotedStringContext::Object).map(|s| ValueChunk::Str(s))
     ))).map(|x: Vec<ValueChunk>| {
 
         // if the last value chunk is a string, then all trailing spaces must be
@@ -562,5 +577,31 @@ mod tests {
 
         assert_eq!(substitution().parse("${? x }"), Ok((Substitution::Optional(vec!["x".into()]), "")));
         assert_eq!(substitution().parse("${?i1.i2}"), Ok((Substitution::Optional(vec!["i1".into(), "i2".into()]), "")));
+    }
+
+    #[test]
+    fn test_unquoted_string() {
+        assert!(unquoted_string(UnquotedStringContext::Array).parse("").is_err());
+
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x"), Ok(("x".into(), "")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("xx"), Ok(("xx".into(), "")));
+
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x\n"), Ok(("x".into(), "\n")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x\r\n"), Ok(("x".into(), "\r\n")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x#"), Ok(("x".into(), "#")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x//"), Ok(("x".into(), "//")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x\""), Ok(("x".into(), "\"")));
+
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x$"), Ok(("x$".into(), "")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x${"), Ok(("x".into(), "${")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x//"), Ok(("x".into(), "//")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x/x"), Ok(("x/x".into(), "")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x/"), Ok(("x/".into(), "")));
+
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x}"), Ok(("x}".into(), "")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x]"), Ok(("x".into(), "]")));
+
+        assert_eq!(unquoted_string(UnquotedStringContext::Object).parse("x}"), Ok(("x".into(), "}")));
+        assert_eq!(unquoted_string(UnquotedStringContext::Object).parse("x]"), Ok(("x]".into(), "")));
     }
 }
