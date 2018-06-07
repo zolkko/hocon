@@ -56,7 +56,7 @@ enum Field {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum UnquotedStringContext {
+enum ValueContext {
     Array,
     Object
 }
@@ -258,14 +258,14 @@ where
 /// Hocon format allows a user to omit double-quote symbol when they define a string value.
 /// Because a user can use an unquoted string inside arrays and objects we must
 /// specify the context in argument `ctx`.
-fn unquoted_string<I>(ctx: UnquotedStringContext) -> impl Parser<Input = I, Output = String>
+fn unquoted_string<I>(ctx: ValueContext) -> impl Parser<Input = I, Output = String>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let end_char = match ctx {
-        UnquotedStringContext::Array => ']',
-        UnquotedStringContext::Object => '}',
+        ValueContext::Array => ']',
+        ValueContext::Object => '}',
     };
 
     let until_line_end = parser(move |input: &mut I| {
@@ -325,15 +325,16 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
+    let object_parser = parser(|input: &mut I| object().parse_stream(input));
+
     choice((
         include().map(|i| Field::Inc(i)),
         (
             field_name().skip(ws0()),
             choice((
-                token(':').or(token('=')).skip(ws0()).with(field_value()).map(|v| FieldValue::Assign(v)),
-// TODO: find a way to uncomment following line
-//                object().map(|_| FieldValue::Assign(Vec::new())),
-                string("+=").skip(ws0()).with(field_value()).map(|v| FieldValue::Append(v)),
+                token(':').or(token('=')).skip(ws0()).with(value()).map(|v| FieldValue::Assign(v)),
+                object_parser.map(|_| FieldValue::Assign(Vec::new())),
+                string("+=").skip(ws0()).with(value()).map(|v| FieldValue::Append(v)),
             ))
         ).map(|x| Field::Field(x))
     ))
@@ -345,7 +346,7 @@ where
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     let array_body = empty_lines().with(
-        optional(sep_by(field_value(), separator()).skip(ws0()).skip(optional(separator())).skip(ws0()))
+        optional(sep_by(value(), separator()).skip(ws0()).skip(optional(separator())).skip(ws0()))
     ).map(|x| match x {
         Some(v) => v,
         None => Vec::new()
@@ -394,19 +395,22 @@ where
     between(token('{'), token('}'), object_body()).map(|_| ())
 }
 
-fn field_value<I>() -> impl Parser<Input = I, Output = Vec<ValueChunk>>
+fn value<I>() -> impl Parser<Input = I, Output = Vec<ValueChunk>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
+    // Need this to prevent an overflow evaluating the requirement `impl combine::Parser`
+    let object_parser = parser(|input: &mut I| object().parse_stream(input));
+    let array_parser = parser(|input: &mut I| array().parse_stream(input));
+
     many(choice((
-        triple_quoted_string().map(|s: String| ValueChunk::Str(s)),
-        double_string().map(|s: String| ValueChunk::Str(s)),
-        substitution().map(|s: Substitution| ValueChunk::Variable(s)),
-// FIXME: uncomment following line
-//        object().map(|_| ValueChunk::Object),
-//        array().map(|a| ValueChunk::Array(a)),
-        unquoted_string(UnquotedStringContext::Object).map(|s| ValueChunk::Str(s))
+        triple_quoted_string().map(ValueChunk::Str),
+        double_string().map(ValueChunk::Str),
+        substitution().map(ValueChunk::Variable),
+        object_parser.map(|_| ValueChunk::Object),
+        array_parser.map(ValueChunk::Array),
+        unquoted_string(ValueContext::Object).map(|s| ValueChunk::Str(s))
     ))).map(|x: Vec<ValueChunk>| {
 
         // if the last value chunk is a string, then all trailing spaces must be
@@ -583,28 +587,28 @@ mod tests {
 
     #[test]
     fn test_unquoted_string() {
-        assert!(unquoted_string(UnquotedStringContext::Array).parse("").is_err());
+        assert!(unquoted_string(ValueContext::Array).parse("").is_err());
 
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x"), Ok(("x".into(), "")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("xx"), Ok(("xx".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x"), Ok(("x".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("xx"), Ok(("xx".into(), "")));
 
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x\n"), Ok(("x".into(), "\n")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x\r\n"), Ok(("x".into(), "\r\n")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x#"), Ok(("x".into(), "#")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x//"), Ok(("x".into(), "//")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x\""), Ok(("x".into(), "\"")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x\n"), Ok(("x".into(), "\n")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x\r\n"), Ok(("x".into(), "\r\n")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x#"), Ok(("x".into(), "#")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x//"), Ok(("x".into(), "//")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x\""), Ok(("x".into(), "\"")));
 
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x$"), Ok(("x$".into(), "")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x${"), Ok(("x".into(), "${")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x//"), Ok(("x".into(), "//")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x/x"), Ok(("x/x".into(), "")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x/"), Ok(("x/".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x$"), Ok(("x$".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x${"), Ok(("x".into(), "${")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x//"), Ok(("x".into(), "//")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x/x"), Ok(("x/x".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x/"), Ok(("x/".into(), "")));
 
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x}"), Ok(("x}".into(), "")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Array).parse("x]"), Ok(("x".into(), "]")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x}"), Ok(("x}".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x]"), Ok(("x".into(), "]")));
 
-        assert_eq!(unquoted_string(UnquotedStringContext::Object).parse("x}"), Ok(("x".into(), "}")));
-        assert_eq!(unquoted_string(UnquotedStringContext::Object).parse("x]"), Ok(("x]".into(), "")));
+        assert_eq!(unquoted_string(ValueContext::Object).parse("x}"), Ok(("x".into(), "}")));
+        assert_eq!(unquoted_string(ValueContext::Object).parse("x]"), Ok(("x]".into(), "")));
     }
 
     #[test]
