@@ -1,5 +1,6 @@
 #![feature(duration_from_micros)]
 #![feature(slice_patterns)]
+#![recursion_limit="67"]
 
 #[macro_use]
 extern crate nom;
@@ -17,4 +18,4 @@ pub mod mem;
 pub mod parsers;
 pub mod config_factory;
 
-mod grammar;
+pub mod grammar;

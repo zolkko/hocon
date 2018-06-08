@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::vec::Vec;
 
 use combine::parser::combinator::recognize;
-use combine::parser::char::{crlf, newline, string, letter, digit};
+use combine::parser::char::{crlf, newline, string, letter, digit, spaces};
 use combine::stream::state::State;
 use combine::error::Consumed;
 use combine::*;
@@ -22,7 +22,7 @@ enum Substitution {
 
 /// A user may include another file or url. Included configuration will be
 /// merged into an object in the context.
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 enum Include {
     Any(String),
     Url(String),
@@ -32,16 +32,16 @@ enum Include {
 
 /// Users can go crazy when they define a value of a field.
 /// Thus, each value consists of zero or more value-chunks.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 enum ValueChunk {
     Str(String),
     Variable(Substitution),
     Array(Vec<Vec<ValueChunk>>),
-    Object
+    Object(Vec<Field>)
 }
 
 /// Field's value can be assigned, reassigned or appended to an existing field.
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 enum FieldValue {
     Assign(Vec<ValueChunk>),
     Append(Vec<ValueChunk>),
@@ -49,7 +49,7 @@ enum FieldValue {
 
 /// I model a field and an include directive because these entities appear in
 /// the same position of the grammar.
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Debug)]
 enum Field {
     Field((Vec<String>, FieldValue)),
     Inc(Include)
@@ -96,9 +96,8 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let slash_slash = token('/').with(token('/'));
     let comment = unit((
-        token('#').or(slash_slash),
+        unit(token('#')).or(unit(try(string("//")))),
         skip_many(satisfy(|c| c != '\n' && c != '\r')),
         choice((
             unit(eof()),
@@ -218,6 +217,17 @@ where
     between(try(string("\"\"\"")), string("\"\"\""), many(char_in_triple_string))
 }
 
+/// Identifiers in Hocon are not normal variable names. For instance in `akka.conf` a field name
+/// may start with slash character. Because the list of allowed characters is unknown and not
+/// specified anywhere this function is extracted
+fn identifier_char<I>() -> impl Parser<Input = I, Output = char>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    satisfy(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '$' || c == '/' || c == '\\')
+}
+
 /// Recognizes an identifier. The first character of an identifier starts with letter and
 /// later characters can be letters, digits, underscores etc.
 fn identifier<I>() -> impl Parser<Input = I, Output = String>
@@ -225,10 +235,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    recognize((
-        letter(),
-        many::<String, _>(satisfy(|c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '$'))
-    ))
+    many1(identifier_char())
 }
 
 /// Hocon allows to address objects' sub-fields though dot notation.
@@ -271,7 +278,7 @@ where
     let until_line_end = parser(move |input: &mut I| {
         let (c, next) = try!(any().parse_lazy(input).into());
         match c {
-            '#' | '\n' | '"' => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
+            '#' | '\n' | '"' | ',' => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
             v if v == end_char => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
             '$' => match look_ahead(token('{')).parse_stream(input) {
                 Ok(_) => Err(Consumed::Empty(I::Error::empty(input.position()).into())),
@@ -309,6 +316,42 @@ where
     )
 }
 
+/// The parser recognizes an array. Arrays in Hocon are similar to json-arrays, but
+/// the separator can either comma or newline character.
+///
+/// Also it is allowed to add a trailing comma.
+fn array<I>() -> impl Parser<Input = I, Output = Vec<Vec<ValueChunk>>>
+where
+    I: Stream<Item = char>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+
+    let can_be_element = look_ahead(satisfy(|c: char| c != ']'));
+
+    let array_body = empty_lines().with(
+        optional(sep_by(value(ValueContext::Array), try(separator().skip(can_be_element)))).skip(optional(separator())).skip(empty_lines())
+    ).map(|x: Option<Vec<Vec<ValueChunk>>>| {
+        match x {
+            Some(v) => {
+                if v.is_empty() {
+                    v
+                } else {
+                    let last_is_empty = v.last().map(|i| i.len() == 0).unwrap_or(false);
+                    if last_is_empty {
+                        v[0..v.len() - 1].to_vec()
+                    } else {
+                        v
+                    }
+                }
+            },
+            None => Vec::new()
+        }
+    });
+
+    between(token('['), token(']'), array_body)
+}
+
+/// Fields' names in Hocon format are either enquoted strings as in json, or identifiers.
 fn field_name<I>() -> impl Parser<Input = I, Output = Vec<String>>
 where
     I: Stream<Item = char>,
@@ -320,6 +363,7 @@ where
     ))
 }
 
+/// Despite its name, this parser recognizes not only fields but also include directives
 fn field<I>() -> impl Parser<Input = I, Output = Field>
 where
     I: Stream<Item = char>,
@@ -328,74 +372,45 @@ where
     let object_parser = parser(|input: &mut I| object().parse_stream(input));
 
     choice((
-        include().map(|i| Field::Inc(i)),
+        include().map(Field::Inc),
         (
-            field_name().skip(ws0()),
+            field_name().skip(spaces()),
             choice((
-                token(':').or(token('=')).skip(ws0()).with(value()).map(|v| FieldValue::Assign(v)),
-                object_parser.map(|_| FieldValue::Assign(Vec::new())),
-                string("+=").skip(ws0()).with(value()).map(|v| FieldValue::Append(v)),
+                token(':').or(token('=')).skip(spaces()).with(value(ValueContext::Object)).map(FieldValue::Assign),
+                object_parser.map(|_| FieldValue::Assign(vec![ValueChunk::Object(vec![])])),
+                string("+=").skip(ws0()).with(value(ValueContext::Object)).map(FieldValue::Append),
             ))
-        ).map(|x| Field::Field(x))
+        ).map(Field::Field)
     ))
-}
-
-fn array<I>() -> impl Parser<Input = I, Output = Vec<Vec<ValueChunk>>>
-where
-    I: Stream<Item = char>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    let array_body = empty_lines().with(
-        optional(sep_by(value(), separator()).skip(ws0()).skip(optional(separator())).skip(ws0()))
-    ).map(|x| match x {
-        Some(v) => v,
-        None => Vec::new()
-    });
-
-    between(token('['), token(']'), array_body)
 }
 
 /// Object's body parser is extracted into a separate function because Hocon
 /// format allow a top-level object to omit enclosing curly braces.
-fn object_body<I>() -> impl Parser<Input = I, Output = ()>
+fn object_body<I>() -> impl Parser<Input = I, Output = Vec<Field>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    ws0().skip(skip_many(empty_line())).with(
-        optional(sep_by::<Vec<Field>, _, _>(field(), separator()).skip(ws0()).skip(optional(separator())).skip(ws0()))
-    ).map(|maybe_fields| match maybe_fields {
-        Some(fields) => {
+    let can_field_name = look_ahead(identifier_char().or(token('"')));
 
-            for f in fields {
-                // TODO: add fields to the object.
-                // TODO: values can be resolved over here as well.
-                match f {
-                    v @ Field::Field(_) => {
-                        unimplemented!()
-                    },
-                    v @ Field::Inc(_) => {
-                        unimplemented!()
-                    }
-                }
-            }
-
-            ()
-        },
-        None => ()
-    })
+    empty_lines().with(
+        sep_by(field(), try(separator().skip(can_field_name))).skip(optional(separator())).skip(empty_lines())
+    )
 }
 
 /// The parser decodes json/hocon object.
-fn object<I>() -> impl Parser<Input = I, Output = ()>
+fn object<I>() -> impl Parser<Input = I, Output = Vec<Field>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    between(token('{'), token('}'), object_body()).map(|_| ())
+    between(token('{'), token('}'), object_body())
 }
 
-fn value<I>() -> impl Parser<Input = I, Output = Vec<ValueChunk>>
+/// The parser recognizes field's value or an element of an array.
+/// The value returned as a vector of chunks. These values will be combined when the parser
+/// will be resolving substitutions.
+fn value<I>(ctx: ValueContext) -> impl Parser<Input = I, Output = Vec<ValueChunk>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
@@ -408,9 +423,9 @@ where
         triple_quoted_string().map(ValueChunk::Str),
         double_string().map(ValueChunk::Str),
         substitution().map(ValueChunk::Variable),
-        object_parser.map(|_| ValueChunk::Object),
+        object_parser.map(ValueChunk::Object),
         array_parser.map(ValueChunk::Array),
-        unquoted_string(ValueContext::Object).map(|s| ValueChunk::Str(s))
+        unquoted_string(ctx).map(ValueChunk::Str)
     ))).map(|x: Vec<ValueChunk>| {
 
         // if the last value chunk is a string, then all trailing spaces must be
@@ -429,17 +444,17 @@ where
     })
 }
 
-fn hocon<I>() -> impl Parser<Input = I, Output = ()>
+pub fn hocon<I>() -> impl Parser<Input = I, Output = ()>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
     empty_lines().with(
         choice((
-            object(),
-            object_body()
+            unit(object()),
+            unit(object_body())
         ))
-    ).skip(empty_lines())
+    ).skip(empty_lines()).skip(eof())
 }
 
 #[cfg(test)]
@@ -558,9 +573,10 @@ mod tests {
         assert_eq!(identifier().parse("i3-"), Ok(("i3-".into(), "")));
         assert_eq!(identifier().parse("i3$"), Ok(("i3$".into(), "")));
         assert_eq!(identifier().parse("i3$."), Ok(("i3$".into(), ".")));
+        assert_eq!(identifier().parse("1i."), Ok(("1i".into(), ".")));
+        assert_eq!(identifier().parse("/item/item."), Ok(("/item/item".into(), ".")));
 
         assert!(identifier().parse("").is_err());
-        assert!(identifier().parse("1i").is_err());
         assert!(identifier().parse(".").is_err());
     }
 
@@ -593,6 +609,7 @@ mod tests {
         assert_eq!(unquoted_string(ValueContext::Array).parse("xx"), Ok(("xx".into(), "")));
 
         assert_eq!(unquoted_string(ValueContext::Array).parse("x\n"), Ok(("x".into(), "\n")));
+        assert_eq!(unquoted_string(ValueContext::Array).parse("x,"), Ok(("x".into(), ",")));
         assert_eq!(unquoted_string(ValueContext::Array).parse("x\r\n"), Ok(("x".into(), "\r\n")));
         assert_eq!(unquoted_string(ValueContext::Array).parse("x#"), Ok(("x".into(), "#")));
         assert_eq!(unquoted_string(ValueContext::Array).parse("x//"), Ok(("x".into(), "//")));
@@ -617,5 +634,123 @@ mod tests {
         assert_eq!(include().parse("include url( \"url\" )"), Ok((Include::Url("url".into()), "")));
         assert_eq!(include().parse("include file( \"file\" )"), Ok((Include::File("file".into()), "")));
         assert_eq!(include().parse("include classpath( \"classpath\" )"), Ok((Include::Classpath("classpath".into()), "")));
+    }
+
+    #[test]
+    fn test_array() {
+        assert_eq!(array().parse("[]"), Ok((vec![], "")));
+        assert_eq!(array().parse("[  ]"), Ok((vec![], "")));
+        assert_eq!(array().parse("[ x ]"), Ok((vec![vec![ValueChunk::Str("x".into())]], "")));
+        assert_eq!(array().parse("[x#comment\n]"), Ok((vec![vec![ValueChunk::Str("x".into())]], "")));
+        assert_eq!(array().parse("[x,y]"), Ok((vec![vec![ValueChunk::Str("x".into())], vec![ValueChunk::Str("y".into())]], "")));
+        assert_eq!(array().parse("[x,y,]"), Ok((vec![vec![ValueChunk::Str("x".into())], vec![ValueChunk::Str("y".into())]], "")));
+        assert_eq!(array().parse("[#c1\nx#c2\n\n\ny#c3\n,]"), Ok((vec![vec![ValueChunk::Str("x".into())], vec![ValueChunk::Str("y".into())]], "")));
+    }
+
+    #[test]
+    fn test_field_name() {
+        assert_eq!(field_name().parse("key"), Ok((vec!["key".into()], "")));
+        assert_eq!(field_name().parse("key.sub"), Ok((vec!["key".into(), "sub".into()], "")));
+        assert_eq!(field_name().parse("\"key.sub\""), Ok((vec!["key.sub".into()], "")));
+    }
+
+    #[test]
+    fn test_field() {
+        assert_eq!(field().parse("key = 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
+        assert_eq!(field().parse("key : 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
+        assert_eq!(field().parse("key += 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Append(vec![ValueChunk::Str("123".into())]))), "")));
+
+        assert_eq!(field().parse("key.sub = 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
+        assert_eq!(field().parse("key.sub : 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
+        assert_eq!(field().parse("key.sub += 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Append(vec![ValueChunk::Str("123".into())]))), "")));
+
+        assert_eq!(field().parse("include \"test\""), Ok((Field::Inc(Include::Any("test".into())), "")));
+
+        assert_eq!(field().parse("key { }"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Object(vec![])]))), "")));
+    }
+
+    #[test]
+    fn test_object_body() {
+        assert_eq!(object_body().parse("key=value"), Ok((
+            vec![
+                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+            ], "")));
+        assert_eq!(object_body().parse("key=value\n"), Ok((
+            vec![
+                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+            ], "")));
+        assert_eq!(object_body().parse("key=value#comment\n"), Ok((
+            vec![
+                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+            ], "")));
+
+        assert_eq!(object_body().parse("key1=value1,key2=value2"), Ok((
+            vec![
+                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+            ], "")));
+        assert_eq!(object_body().parse("key1=value1\nkey2=value2"), Ok((
+            vec![
+                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+            ], "")));
+
+        assert_eq!(object_body().parse("key1=value1\nkey2=value2\n"), Ok((
+            vec![
+                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+            ], "")));
+        assert_eq!(object_body().parse("key1=value1\nkey2=value2#comment\n"), Ok((
+            vec![
+                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+            ], "")));
+        assert_eq!(object_body().parse("key1=value1\nkey2=value2#comment1\n\n#comment2"), Ok((
+            vec![
+                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+            ], "")));
+        assert_eq!(object_body().parse("key1=value1#comment\nkey2=value2"), Ok((
+            vec![
+                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+            ], "")));
+    }
+
+    #[test]
+    fn test_object() {
+        assert_eq!(object().parse("{ }"), Ok((vec![], "")));
+        assert_eq!(object().parse("{ key=value }"), Ok((
+            vec![
+                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+            ], "")));
+    }
+
+    #[test]
+    fn test_hocon() {
+        assert_eq!(hocon().parse(""), Ok(((), "")));
+        assert_eq!(hocon().parse("{}"), Ok(((), "")));
+
+        assert_eq!(hocon().parse(" "), Ok(((), "")));
+        assert_eq!(hocon().parse("{ }"), Ok(((), "")));
+
+        assert_eq!(hocon().parse("key=value"), Ok(((), "")));
+        assert_eq!(hocon().parse("{key=value}"), Ok(((), "")));
+
+        assert_eq!(hocon().parse(" key=value "), Ok(((), "")));
+        assert_eq!(hocon().parse("{ key=value }"), Ok(((), "")));
+    }
+
+    #[test]
+    fn test_akka() {
+        let s = r#"
+        /IO-DNS/inet-address {
+            mailbox = "unbounded"
+            router = "consistent-hashing-pool"
+            nr-of-instances = 4
+        }
+        "#;
+
+        assert!(hocon().parse(s).is_ok());
     }
 }
