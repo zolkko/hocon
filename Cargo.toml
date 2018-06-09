@@ -6,9 +6,5 @@ authors = ["zolkko <zolkko@gmail.com>"]
 [dependencies]
 combine = "~3.3.2"
 
-[dependencies.nom]
-version = "~4.0.0"
-features = ["verbose-errors"] # "nightly"
-
 [dependencies.failure]
 version = "~0.1.1"

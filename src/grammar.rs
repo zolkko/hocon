@@ -1,12 +1,8 @@
 extern crate combine;
 
-use std::f64;
-use std::str::FromStr;
 use std::vec::Vec;
 
-use combine::parser::combinator::recognize;
-use combine::parser::char::{crlf, newline, string, letter, digit, spaces};
-use combine::stream::state::State;
+use combine::char::{crlf, newline, string, spaces};
 use combine::error::Consumed;
 use combine::*;
 
@@ -451,10 +447,10 @@ where
 {
     empty_lines().with(
         choice((
-            unit(object()),
-            unit(object_body())
+            object(),
+            object_body()
         ))
-    ).skip(empty_lines()).skip(eof())
+    ).skip(empty_lines()).skip(eof()).map(|_| ())
 }
 
 #[cfg(test)]
