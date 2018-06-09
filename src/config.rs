@@ -93,25 +93,29 @@ pub(crate) fn merge_objects(dest: &mut Object, src: &Object) {
 }
 
 pub(crate) fn put_value<'a>(dest: &mut Object, path: &[&'a str], value: &ConfigValue) {
-    match path {
-        [] => (),
-        [k] => merge_value(dest, k, value),
-        [k, rest.., last_k] => {
-            let mut obj = Object::new();
-            obj.insert(last_k.to_string(), value.clone());
 
-            for key in rest.iter().rev() {
-                let mut next_obj = Object::new();
-                next_obj.insert(key.to_string(), ConfigValue::Object(obj));
+    if path.len() == 0 {
+        ()
+    } else if path.len() == 1 {
+        merge_value(dest, path[0], value)
+    } else {
+        let (k, rest) = path.split_first().unwrap();
+        let (last_k, rest) = rest.split_last().unwrap();
 
-                obj = next_obj;
-            }
+        let mut obj = Object::new();
+        obj.insert(last_k.to_string(), value.clone());
 
-            if !dest.contains_key(&k.to_string()) {
-                dest.insert(k.to_string(), ConfigValue::Object(obj));
-            } else {
-                merge_value(dest, k, value);
-            }
+        for key in rest.iter().rev() {
+            let mut next_obj = Object::new();
+            next_obj.insert(key.to_string(), ConfigValue::Object(obj));
+
+            obj = next_obj;
+        }
+
+        if !dest.contains_key(&k.to_string()) {
+            dest.insert(k.to_string(), ConfigValue::Object(obj));
+        } else {
+            merge_value(dest, k, value);
         }
     }
 }
@@ -120,6 +124,25 @@ pub(crate) fn put_value<'a>(dest: &mut Object, path: &[&'a str], value: &ConfigV
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn test_put_value() {
+        let mut dest = Object::new();
+        let value = ConfigValue::Value("a value".into());
+        put_value(&mut dest, &["key"], &value);
+
+        assert_eq!(dest.get("key".into()), Some(&ConfigValue::Value("a value".into())));
+
+        let mut dest = Object::new();
+        let value = ConfigValue::Value("a value".into());
+        put_value(&mut dest, &["key", "sub"], &value);
+
+        assert_eq!(dest.get("key".into()), Some(&ConfigValue::Object(
+            object![
+                "sub".into() => ConfigValue::Value("a value".into())
+            ]
+        )))
+    }
 
     #[test]
     fn test_merge_value() {
