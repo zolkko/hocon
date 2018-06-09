@@ -1,27 +1,43 @@
 use std::collections::BTreeMap;
 
-pub enum Include {
-    Any(String),
-    Url(String),
-    Classpath(String),
-    File(String)
+
+trait Path {
 }
+
+
+trait Config<'a> {
+
+    /// Get values as a boolean
+    fn get_boolean<P: Path>(&self, path: &P) -> Option<bool>;
+
+    /// Gets a list value with boolean elements.
+    fn get_boolean_list<P: Path>(&self, path: &P) -> Option<&'a [bool]>;
+
+    /// Gets a value as a size in bytes (parses special strings like "128M").
+    fn get_bytes<P: Path>(&self, path: &P) -> Option<u64>;
+
+    /// Gets a list value with elements representing a size in bytes.
+    fn get_bytes_list<P: Path>(&self, path: &P) -> Option<&'a [u64]>;
+
+    fn get_config<P: Path>(&self, path: &P) -> Option<&'a Self>;
+}
+
 
 pub struct IncludeError {
 }
 
-pub type IncludeResult = Result<Config, IncludeError>;
+pub type IncludeResult = Result<ConfigValue, IncludeError>;
 
 
 pub struct ParseError {
 }
 
-pub type ParseResult = Result<Config, ParseError>;
+pub type ParseResult = Result<ConfigValue, ParseError>;
 
 
 /// Representation of a Hocon value.
 #[derive(PartialEq, Clone, Debug)]
-pub enum Config {
+pub enum ConfigValue {
     /// Represents a Hocon value
     Value(String),
     /// Represents a Hocon array
@@ -31,30 +47,30 @@ pub enum Config {
 }
 
 /// Type representing a Hocon array, payload of the `Config::Array` variant
-pub type Array = Vec<Config>;
+pub type Array = Vec<ConfigValue>;
 
 /// Type representing a Hocon table, payload of the `Config::Object` variant
-pub type Object = BTreeMap<String, Config>;
+pub type Object = BTreeMap<String, ConfigValue>;
 
 
-fn merge_value(dest: &mut Object, key: &str, value: &Config) {
+fn merge_value(dest: &mut Object, key: &str, value: &ConfigValue) {
     let insert = match dest.get_mut(key) {
         Some(dest_value) => match dest_value {
-            Config::Object(ref mut dest_obj) => match value {
-                Config::Object(ref src_obj) => {
+            ConfigValue::Object(ref mut dest_obj) => match value {
+                ConfigValue::Object(ref src_obj) => {
                     merge_objects(dest_obj, src_obj);
                     false
                 }
                 _ => true,
             },
-            Config::Array(ref mut dest_array) => match value {
-                Config::Array(ref src_array) => {
+            ConfigValue::Array(ref mut dest_array) => match value {
+                ConfigValue::Array(ref src_array) => {
                     merge_arrays(dest_array, src_array);
                     false
                 }
                 _ => true,
             },
-            Config::Value(_) => true,
+            ConfigValue::Value(_) => true,
         },
         None => true,
     };
@@ -76,7 +92,7 @@ pub(crate) fn merge_objects(dest: &mut Object, src: &Object) {
     }
 }
 
-pub(crate) fn put_value<'a>(dest: &mut Object, path: &[&'a str], value: &Config) {
+pub(crate) fn put_value<'a>(dest: &mut Object, path: &[&'a str], value: &ConfigValue) {
     match path {
         [] => (),
         [k] => merge_value(dest, k, value),
@@ -86,13 +102,13 @@ pub(crate) fn put_value<'a>(dest: &mut Object, path: &[&'a str], value: &Config)
 
             for key in rest.iter().rev() {
                 let mut next_obj = Object::new();
-                next_obj.insert(key.to_string(), Config::Object(obj));
+                next_obj.insert(key.to_string(), ConfigValue::Object(obj));
 
                 obj = next_obj;
             }
 
             if !dest.contains_key(&k.to_string()) {
-                dest.insert(k.to_string(), Config::Object(obj));
+                dest.insert(k.to_string(), ConfigValue::Object(obj));
             } else {
                 merge_value(dest, k, value);
             }
@@ -108,51 +124,51 @@ mod tests {
     #[test]
     fn test_merge_value() {
         let mut dest = Object::new();
-        merge_value(&mut dest, &"key", &Config::Value("a value".to_string()));
-        assert_eq!(dest.get(&"key".to_string()), Some(&Config::Value("a value".to_string())));
+        merge_value(&mut dest, &"key", &ConfigValue::Value("a value".to_string()));
+        assert_eq!(dest.get(&"key".to_string()), Some(&ConfigValue::Value("a value".to_string())));
 
-        let mut dest = object!["key".to_string() => Config::Value("old value".to_string())];
-        merge_value(&mut dest, &"key".to_string(), &Config::Value("new value".to_string()));
-        assert_eq!(dest.get(&"key".to_string()), Some(&Config::Value("new value".to_string())));
+        let mut dest = object!["key".to_string() => ConfigValue::Value("old value".to_string())];
+        merge_value(&mut dest, &"key".to_string(), &ConfigValue::Value("new value".to_string()));
+        assert_eq!(dest.get(&"key".to_string()), Some(&ConfigValue::Value("new value".to_string())));
 
-        let mut dest = object!["key".to_string() => Config::Array(vec![Config::Value("old value".to_string())])];
-        merge_value(&mut dest, &"key", &Config::Array(vec![Config::Value("new value".to_string())]));
+        let mut dest = object!["key".to_string() => ConfigValue::Array(vec![ConfigValue::Value("old value".to_string())])];
+        merge_value(&mut dest, &"key", &ConfigValue::Array(vec![ConfigValue::Value("new value".to_string())]));
         assert_eq!(
             dest.get(&"key".to_string()),
-            Some(&Config::Array(vec![Config::Value("old value".to_string()), Config::Value("new value".to_string())]))
+            Some(&ConfigValue::Array(vec![ConfigValue::Value("old value".to_string()), ConfigValue::Value("new value".to_string())]))
         );
 
         let mut dest = object![
-            "key".to_string() => Config::Array(vec![Config::Value("old value".to_string())])
+            "key".to_string() => ConfigValue::Array(vec![ConfigValue::Value("old value".to_string())])
         ];
-        merge_value(&mut dest, &"key", &Config::Value("new value".to_string()));
-        assert_eq!(dest.get(&"key".to_string()), Some(&Config::Value("new value".to_string())));
+        merge_value(&mut dest, &"key", &ConfigValue::Value("new value".to_string()));
+        assert_eq!(dest.get(&"key".to_string()), Some(&ConfigValue::Value("new value".to_string())));
 
         let mut dest = object![
-            "key".to_string() => Config::Object(object![
-                "key1".to_string() => Config::Value("old sub value".to_string()),
-                "key3".to_string() => Config::Array(vec![Config::Value("array-value-1".to_string())]),
-                "key4".to_string() => Config::Value("old value 4".to_string())
+            "key".to_string() => ConfigValue::Object(object![
+                "key1".to_string() => ConfigValue::Value("old sub value".to_string()),
+                "key3".to_string() => ConfigValue::Array(vec![ConfigValue::Value("array-value-1".to_string())]),
+                "key4".to_string() => ConfigValue::Value("old value 4".to_string())
             ])
         ];
 
-        merge_value(&mut dest, &"key".to_string(), &Config::Object(object![
-            "key1".to_string() => Config::Value("new sub value".to_string()),
-            "key2".to_string() => Config::Value("value2".to_string()),
-            "key3".to_string() => Config::Array(vec![Config::Value("array-value-2".to_string())])
+        merge_value(&mut dest, &"key".to_string(), &ConfigValue::Object(object![
+            "key1".to_string() => ConfigValue::Value("new sub value".to_string()),
+            "key2".to_string() => ConfigValue::Value("value2".to_string()),
+            "key3".to_string() => ConfigValue::Array(vec![ConfigValue::Value("array-value-2".to_string())])
         ]));
 
         assert_eq!(
             dest,
             object![
-                "key".to_string() => Config::Object(object![
-                    "key1".to_string() => Config::Value("new sub value".to_string()),
-                    "key2".to_string() => Config::Value("value2".to_string()),
-                    "key3".to_string() => Config::Array(vec![
-                        Config::Value("array-value-1".to_string()),
-                        Config::Value("array-value-2".to_string())
+                "key".to_string() => ConfigValue::Object(object![
+                    "key1".to_string() => ConfigValue::Value("new sub value".to_string()),
+                    "key2".to_string() => ConfigValue::Value("value2".to_string()),
+                    "key3".to_string() => ConfigValue::Array(vec![
+                        ConfigValue::Value("array-value-1".to_string()),
+                        ConfigValue::Value("array-value-2".to_string())
                     ]),
-                    "key4".to_string() => Config::Value("old value 4".to_string())
+                    "key4".to_string() => ConfigValue::Value("old value 4".to_string())
                 ])
             ],
         );

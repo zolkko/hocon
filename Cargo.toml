@@ -5,6 +5,6 @@ authors = ["zolkko <zolkko@gmail.com>"]
 
 [dependencies]
 combine = "~3.3.2"
+failure = "~0.1.1"
 
-[dependencies.failure]
-version = "~0.1.1"
+[dev-dependencies]

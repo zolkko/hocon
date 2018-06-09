@@ -1,6 +1,10 @@
 use super::config::*;
 
 
+pub enum Include {
+    Unknown
+}
+
 pub struct ConfigFactory {
     processor: Option<&'static Fn(&Include) -> IncludeResult>,
 }
