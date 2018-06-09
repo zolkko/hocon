@@ -1,5 +1,3 @@
-#![feature(duration_from_micros)]
-#![feature(slice_patterns)]
 #![recursion_limit="67"]
 
 extern crate combine;
