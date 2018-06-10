@@ -92,7 +92,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    let comment = unit((
+    unit((
         unit(token('#')).or(unit(try(string("//")))),
         skip_many(satisfy(|c| c != '\n' && c != '\r')),
         choice((
@@ -100,9 +100,7 @@ where
             unit(crlf()),
             unit(newline())
         ))
-    ));
-
-    comment
+    ))
 }
 
 /// The parser consumes the empty-line: enter-key or a comment followed by
@@ -250,12 +248,13 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    choice((
-        between(try(string("${?")).skip(ws0()), ws0().with(string("}")), identifiers())
-            .map(|x: Vec<String>| Substitution::Optional(x)),
-        between(try(string("${")).skip(ws0()), ws0().with(string("}")), identifiers())
-            .map(|x: Vec<String>| Substitution::Required(x))
-    ))
+    let opt = between(try(string("${?")).skip(ws0()), ws0().with(string("}")), identifiers())
+        .map(Substitution::Optional);
+
+    let req = between(try(string("${")).skip(ws0()), ws0().with(string("}")), identifiers())
+        .map(Substitution::Required);
+
+    opt.or(req)
 }
 
 /// Hocon format allows a user to omit double-quote symbol when they define a string value.
@@ -332,7 +331,7 @@ where
                 if v.is_empty() {
                     v
                 } else {
-                    let last_is_empty = v.last().map(|i| i.len() == 0).unwrap_or(false);
+                    let last_is_empty = v.last().map(|i| i.is_empty()).unwrap_or(false);
                     if last_is_empty {
                         v[0..v.len() - 1].to_vec()
                     } else {
