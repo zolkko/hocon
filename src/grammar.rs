@@ -51,6 +51,8 @@ enum Field {
     Inc(Include)
 }
 
+/// Depending on the context of a value (an array element or a field's value), the
+/// parser should stop and certain character. This enum encodes this information.
 #[derive(Clone, Copy, Debug)]
 enum ValueContext {
     Array,
