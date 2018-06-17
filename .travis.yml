@@ -1,24 +1,40 @@
 language: rust
 rust:
-  - stable
-  - beta
-  - nightly
-sudo: false
-before_script:
-  - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
+- stable
+- beta
+- nightly
+sudo: required
 script:
-  - cargo test
-  - rustdoc --test README.md -L target
-  - cargo doc --no-deps || echo "skipping cargo doc"
-after_success:
-  - travis-cargo coveralls --no-sudo
-
+- cargo test
+- rustdoc --test README.md -L target
+- cargo doc --no-deps || echo "skipping cargo doc"
 notifications:
   email:
     on_success: never
 addons:
   apt:
     packages:
-      - libcurl4-openssl-dev
-      - libelf-dev
-      - libdw-dev
+    - libcurl4-openssl-dev
+    - libelf-dev
+    - libdw-dev
+    - cmake
+    - gcc
+    - binutils-dev
+    - libiberty-dev
+after_success: |
+  wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz &&
+  tar xzf master.tar.gz &&
+  cd kcov-master &&
+  mkdir build &&
+  cd build &&
+  cmake .. &&
+  make &&
+  make install DESTDIR=../../kcov-build &&
+  cd ../.. &&
+  rm -rf kcov-master &&
+  for file in target/debug/hocon-*[^\.d]; do mkdir -p "target/cov/$(basename $file)"; ./kcov-build/usr/local/bin/kcov --exclude-pattern=/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file"; done &&
+  bash <(curl -s https://codecov.io/bash) &&
+  echo "Uploaded code coverage"
+env:
+  global:
+    secure: jqb5QLAW0ACBWBPaxexXTPZJrqdPp1su7/GxRSPKmRIb6RpKFyipiwkn8jDUuY72+b4/oygPbziKXyU5S64yVhTbNrHmZ2xPoHl3S8eaOYk0jLmjYZhGtErpbgU85atXhk/G20yEb7CSV9oyxh5YqWBs6dWvsT+0bM3mslx35eqSRJsq2F55PpylBGZ3lQHb51+nry0sMH/ji+nWJaPWZY7GCmd6IX0PkEYTrf3ub++rZX05M/8c8eewOXoPZdQINSyQvPM28PipKzvVNG/o+YnwK1c2aN69MHciiznQmwNJI3OQsjLq5bfSXrfjjlmiTFsYNak0LdIU2rXmuz0B0ocjoX+gJAuxBD7lgqxQuUxupNXxfQv2oSo6/XAk6YkO5/0LNNhwA64CFmRZ1VGK45MXrGpAyBrNMG3lZJdh/JD9Tcn+MWNzcDOp0eJlCNoPCNEh12PG2Eottqctqz88XQdSpUyaK6ZLeMOIgC0n+kGWUzr5KbyarTAf591C9PRJUXCs4hZQCqOEvbtZs3P4yohG/C+5MNcD3eW+jSryOse1Z8qZD6kQqdHZA+O/MOxwXpbGi1HnteBNH5lKX0YOhnUEM5QlM1ZQ9vPjKKj61VjWkJ1bV5PphpPk5moU7LtCu+39XkgulqM3dIYdDv8tj1Pf9vkxzT0fcp8NMLv91NE=
