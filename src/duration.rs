@@ -1,9 +1,8 @@
-use std::str::FromStr;
-use std::u64;
 use std::time::Duration;
 
 use combine::char::{string, digit};
-use combine::error::Consumed;
+use combine::error::{Consumed, ParseError, StreamError};
+use combine::stream::{StreamErrorFor, Stream};
 use combine::*;
 
 
@@ -121,8 +120,7 @@ where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
 {
-    // TODO: use flat_map when converting string to number and return an Err which indicates that the parser failed.
-    many1::<String, _>(digit()).map(|s| u64::from_str(&s).expect("failed to parse duration value"))
+    many1::<String, _>(digit()).and_then(|s| s.parse::<u64>().map_err(StreamErrorFor::<I>::other))
         .skip(skip_many(satisfy(|chr| chr == ' ' || chr == '\t')))
         .and(choice((
             nanoseconds(),
