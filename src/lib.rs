@@ -9,3 +9,4 @@ pub mod macros;
 pub mod config;
 pub mod config_factory;
 pub mod grammar;
+mod duration;
