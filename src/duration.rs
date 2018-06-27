@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use combine::char::{string, digit};
-use combine::error::{Consumed, ParseError, StreamError};
+use combine::error::{ParseError, StreamError};
 use combine::stream::{StreamErrorFor, Stream};
 use combine::*;
 

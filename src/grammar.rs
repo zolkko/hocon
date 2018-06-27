@@ -32,15 +32,26 @@ enum Include {
 enum ValueChunk {
     Str(String),
     Variable(Substitution),
-    Array(Vec<Vec<ValueChunk>>),
+    Array(Vec<ValueChunks>),
     Object(Vec<Field>)
+}
+
+#[derive(Clone, PartialEq, Debug)]
+struct ValueChunks {
+    chunks: Vec<ValueChunk>
+}
+
+impl ValueChunks {
+    fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
 }
 
 /// Field's value can be assigned, reassigned or appended to an existing field.
 #[derive(Clone, PartialEq, Debug)]
 enum FieldValue {
-    Assign(Vec<ValueChunk>),
-    Append(Vec<ValueChunk>),
+    Assign(ValueChunks),
+    Append(ValueChunks),
 }
 
 /// I model a field and an include directive because these entities appear in
@@ -317,7 +328,7 @@ where
 /// the separator can either comma or newline character.
 ///
 /// Also it is allowed to add a trailing comma.
-fn array<I>() -> impl Parser<Input = I, Output = Vec<Vec<ValueChunk>>>
+fn array<I>() -> impl Parser<Input = I, Output = Vec<ValueChunks>>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
@@ -327,7 +338,7 @@ where
 
     let array_body = empty_lines().with(
         optional(sep_by(value(ValueContext::Array), try(separator().skip(can_be_element)))).skip(optional(separator())).skip(empty_lines())
-    ).map(|x: Option<Vec<Vec<ValueChunk>>>| {
+    ).map(|x: Option<Vec<ValueChunks>>| {
         match x {
             Some(v) => {
                 if v.is_empty() {
@@ -374,7 +385,10 @@ where
             field_name().skip(spaces()),
             choice((
                 token(':').or(token('=')).skip(spaces()).with(value(ValueContext::Object)).map(FieldValue::Assign),
-                object_parser.map(|_| FieldValue::Assign(vec![ValueChunk::Object(vec![])])),
+                object_parser.map(|fields| {
+                    let obj = vec![ValueChunk::Object(fields)];
+                    FieldValue::Assign(ValueChunks { chunks: obj })
+                }),
                 string("+=").skip(ws0()).with(value(ValueContext::Object)).map(FieldValue::Append),
             ))
         ).map(Field::Field)
@@ -407,7 +421,7 @@ where
 /// The parser recognizes field's value or an element of an array.
 /// The value returned as a vector of chunks. These values will be combined when the parser
 /// will be resolving substitutions.
-fn value<I>(ctx: ValueContext) -> impl Parser<Input = I, Output = Vec<ValueChunk>>
+fn value<I>(ctx: ValueContext) -> impl Parser<Input = I, Output = ValueChunks>
 where
     I: Stream<Item = char>,
     I::Error: ParseError<I::Item, I::Range, I::Position>,
@@ -433,9 +447,9 @@ where
             if !trimmed.is_empty() {
                 chunks.push(ValueChunk::Str(trimmed.into()));
             }
-            chunks
+            ValueChunks { chunks }
         } else {
-            x.clone()
+            ValueChunks { chunks: x.clone() }
         }
 
     })
@@ -637,11 +651,11 @@ mod tests {
     fn test_array() {
         assert_eq!(array().parse("[]"), Ok((vec![], "")));
         assert_eq!(array().parse("[  ]"), Ok((vec![], "")));
-        assert_eq!(array().parse("[ x ]"), Ok((vec![vec![ValueChunk::Str("x".into())]], "")));
-        assert_eq!(array().parse("[x#comment\n]"), Ok((vec![vec![ValueChunk::Str("x".into())]], "")));
-        assert_eq!(array().parse("[x,y]"), Ok((vec![vec![ValueChunk::Str("x".into())], vec![ValueChunk::Str("y".into())]], "")));
-        assert_eq!(array().parse("[x,y,]"), Ok((vec![vec![ValueChunk::Str("x".into())], vec![ValueChunk::Str("y".into())]], "")));
-        assert_eq!(array().parse("[#c1\nx#c2\n\n\ny#c3\n,]"), Ok((vec![vec![ValueChunk::Str("x".into())], vec![ValueChunk::Str("y".into())]], "")));
+        assert_eq!(array().parse("[ x ]"), Ok((vec![ValueChunks { chunks: vec![ValueChunk::Str("x".into())]}], "")));
+        assert_eq!(array().parse("[x#comment\n]"), Ok((vec![ValueChunks { chunks: vec![ValueChunk::Str("x".into())]}], "")));
+        assert_eq!(array().parse("[x,y]"), Ok((vec![ValueChunks { chunks: vec![ValueChunk::Str("x".into())]}, ValueChunks { chunks: vec![ValueChunk::Str("y".into())]}], "")));
+        assert_eq!(array().parse("[x,y,]"), Ok((vec![ValueChunks { chunks: vec![ValueChunk::Str("x".into())]}, ValueChunks { chunks: vec![ValueChunk::Str("y".into())]}], "")));
+        assert_eq!(array().parse("[#c1\nx#c2\n\n\ny#c3\n,]"), Ok((vec![ValueChunks { chunks: vec![ValueChunk::Str("x".into())]},  ValueChunks { chunks: vec![ValueChunk::Str("y".into())]}], "")));
     }
 
     #[test]
@@ -653,64 +667,64 @@ mod tests {
 
     #[test]
     fn test_field() {
-        assert_eq!(field().parse("key = 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
-        assert_eq!(field().parse("key : 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
-        assert_eq!(field().parse("key += 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Append(vec![ValueChunk::Str("123".into())]))), "")));
+        assert_eq!(field().parse("key = 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("123".into())]}))), "")));
+        assert_eq!(field().parse("key : 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("123".into())]}))), "")));
+        assert_eq!(field().parse("key += 123"), Ok((Field::Field((vec!["key".into()], FieldValue::Append(ValueChunks { chunks: vec![ValueChunk::Str("123".into())]}))), "")));
 
-        assert_eq!(field().parse("key.sub = 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
-        assert_eq!(field().parse("key.sub : 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Assign(vec![ValueChunk::Str("123".into())]))), "")));
-        assert_eq!(field().parse("key.sub += 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Append(vec![ValueChunk::Str("123".into())]))), "")));
+        assert_eq!(field().parse("key.sub = 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("123".into())]}))), "")));
+        assert_eq!(field().parse("key.sub : 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("123".into())]}))), "")));
+        assert_eq!(field().parse("key.sub += 123"), Ok((Field::Field((vec!["key".into(), "sub".into()], FieldValue::Append(ValueChunks { chunks: vec![ValueChunk::Str("123".into())]}))), "")));
 
         assert_eq!(field().parse("include \"test\""), Ok((Field::Inc(Include::Any("test".into())), "")));
 
-        assert_eq!(field().parse("key { }"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Object(vec![])]))), "")));
+        assert_eq!(field().parse("key { }"), Ok((Field::Field((vec!["key".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Object(vec![])]}))), "")));
     }
 
     #[test]
     fn test_object_body() {
         assert_eq!(object_body().parse("key=value"), Ok((
             vec![
-                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+                Field::Field((vec!["key".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value".into())]})))
             ], "")));
         assert_eq!(object_body().parse("key=value\n"), Ok((
             vec![
-                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+                Field::Field((vec!["key".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value".into())]})))
             ], "")));
         assert_eq!(object_body().parse("key=value#comment\n"), Ok((
             vec![
-                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+                Field::Field((vec!["key".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value".into())]})))
             ], "")));
 
         assert_eq!(object_body().parse("key1=value1,key2=value2"), Ok((
             vec![
-                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
-                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+                Field::Field((vec!["key1".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value1".into())]}))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value2".into())]})))
             ], "")));
         assert_eq!(object_body().parse("key1=value1\nkey2=value2"), Ok((
             vec![
-                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
-                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+                Field::Field((vec!["key1".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value1".into())]}))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value2".into())]})))
             ], "")));
 
         assert_eq!(object_body().parse("key1=value1\nkey2=value2\n"), Ok((
             vec![
-                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
-                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+                Field::Field((vec!["key1".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value1".into())]}))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value2".into())]})))
             ], "")));
         assert_eq!(object_body().parse("key1=value1\nkey2=value2#comment\n"), Ok((
             vec![
-                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
-                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+                Field::Field((vec!["key1".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value1".into())]}))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value2".into())]})))
             ], "")));
         assert_eq!(object_body().parse("key1=value1\nkey2=value2#comment1\n\n#comment2"), Ok((
             vec![
-                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
-                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+                Field::Field((vec!["key1".into()], FieldValue::Assign(ValueChunks{ chunks: vec![ValueChunk::Str("value1".into())]}))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(ValueChunks{ chunks: vec![ValueChunk::Str("value2".into())]})))
             ], "")));
         assert_eq!(object_body().parse("key1=value1#comment\nkey2=value2"), Ok((
             vec![
-                Field::Field((vec!["key1".into()], FieldValue::Assign(vec![ValueChunk::Str("value1".into())]))),
-                Field::Field((vec!["key2".into()], FieldValue::Assign(vec![ValueChunk::Str("value2".into())])))
+                Field::Field((vec!["key1".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value1".into())]}))),
+                Field::Field((vec!["key2".into()], FieldValue::Assign(ValueChunks { chunks: vec![ValueChunk::Str("value2".into())]})))
             ], "")));
     }
 
@@ -719,7 +733,9 @@ mod tests {
         assert_eq!(object().parse("{ }"), Ok((vec![], "")));
         assert_eq!(object().parse("{ key=value }"), Ok((
             vec![
-                Field::Field((vec!["key".into()], FieldValue::Assign(vec![ValueChunk::Str("value".into())])))
+                Field::Field((vec!["key".into()], FieldValue::Assign(
+                    ValueChunks { chunks: vec![ValueChunk::Str("value".into())] }
+                )))
             ], "")));
     }
 
