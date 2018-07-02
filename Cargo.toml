@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["zolkko <zolkko@gmail.com>"]
 
 [dependencies]
-combine = "~3.3.2"
+combine = "~3.3.5"
 failure = "~0.1.1"
 
 [dev-dependencies]
