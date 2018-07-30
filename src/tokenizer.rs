@@ -60,37 +60,37 @@ pub(crate) struct Position {
 
 impl Ord for Position {
     fn cmp(&self, other: &Self) -> ::std::cmp::Ordering {
-        unimplemented!()
-    }
-
-    fn max(self, other: Self) -> Self where Self: Sized {
-        unimplemented!()
-    }
-
-    fn min(self, other: Self) -> Self where Self: Sized {
-        unimplemented!()
+        if self.line < other.line {
+            ::std::cmp::Ordering::Less
+        } else if self.line > other.line {
+            ::std::cmp::Ordering::Greater
+        } else {
+            if self.column < other.column {
+                ::std::cmp::Ordering::Less
+            } else if self.column > other.column {
+                ::std::cmp::Ordering::Greater
+            } else {
+                ::std::cmp::Ordering::Equal
+            }
+        }
     }
 }
 
 impl PartialOrd for Position {
     fn partial_cmp(&self, other: &Self) -> Option<::std::cmp::Ordering> {
-        unimplemented!()
-    }
-
-    fn lt(&self, other: &Self) -> bool {
-        unimplemented!()
-    }
-
-    fn le(&self, other: &Self) -> bool {
-        unimplemented!()
-    }
-
-    fn gt(&self, other: &Self) -> bool {
-        unimplemented!()
-    }
-
-    fn ge(&self, other: &Self) -> bool {
-        unimplemented!()
+        if self.line < other.line {
+            Some(::std::cmp::Ordering::Less)
+        } else if self.line > other.line {
+            Some(::std::cmp::Ordering::Greater)
+        } else {
+            if self.column < other.column {
+                Some(::std::cmp::Ordering::Less)
+            } else if self.column > other.column {
+                Some(::std::cmp::Ordering::Greater)
+            } else {
+                Some(::std::cmp::Ordering::Equal)
+            }
+        }
     }
 }
 
