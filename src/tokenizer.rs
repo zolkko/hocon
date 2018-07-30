@@ -197,6 +197,7 @@ impl<'a> TokenStream<'a> {
 
         self.skip_ws();
 
+        // TODO: change to peekable
         let mut iter = self.buf[self.offset..].char_indices();
         let cur_char = match iter.next() {
             Some((_, x)) => x,
@@ -258,43 +259,37 @@ impl<'a> TokenStream<'a> {
                     self.offset += 2;
                     Ok(Token::Subs)
                 } else {
-                    let mut iter = self.buf[self.offset..].char_indices();
-                    self.pull_unquoted_string(&mut iter)
+                    self.pull_unquoted_string()
                 }
             },
             '#' => self.pull_hash_comment(&mut iter),
             '/' => self.pull_slash_comment(&mut iter),
             '0'..='9' | '-' => self.pull_number(&mut iter),
-            _ => self.pull_unquoted_string(&mut iter)
+            _ => self.pull_unquoted_string()
         }
     }
 
     fn pull_slash_comment(&mut self, iter: &mut ::std::str::CharIndices) -> Result<Token<'a>, Error<Token<'a>, Token<'a>>> {
+        let string = iter.as_str();
+        if string.starts_with('/') {
+            let idx = loop {
+                let (idx, chr) = match iter.next() {
+                    Some(pair) => pair,
+                    None => break self.buf.len() - self.offset,
+                };
 
-        /*
-
-        let mut sub_iter = iter.peekable();
-                    if let Some((_, sub_chr)) = sub_iter.peek() {
-                        if *sub_chr == '/' {
-                            // TODO:
-                        }
-                    }*/
-
-        let idx = loop {
-            let (idx, chr) = match iter.next() {
-                Some(pair) => pair,
-                None => break self.buf.len() - self.offset,
+                if chr == '\r' || chr == '\n' {
+                    break idx;
+                }
             };
 
-            if chr == '\r' || chr == '\n' {
-                break idx;
-            }
-        };
-
-        let comment = &self.buf[self.offset..][..idx];
-        self.offset += idx;
-        self.position.column += idx + 1;
-        Ok(Token::Comment(comment))
+            let comment = &self.buf[self.offset..][..idx];
+            self.offset += idx;
+            self.position.column += idx + 1;
+            Ok(Token::Comment(comment))
+        } else {
+            self.pull_unquoted_string()
+        }
     }
 
     fn pull_hash_comment(&mut self, iter: &mut ::std::str::CharIndices) -> Result<Token<'a>, Error<Token<'a>, Token<'a>>> {
@@ -419,14 +414,13 @@ impl<'a> TokenStream<'a> {
 
         match parsed {
             Ok(token) => Ok(token),
-            _ => {
-                let mut iter = self.buf[self.offset..].char_indices();
-                self.pull_unquoted_string(&mut iter)
-            }
+            _ => self.pull_unquoted_string()
         }
     }
 
-    fn pull_unquoted_string(&mut self, iter: &mut ::std::str::CharIndices) -> Result<Token<'a>, Error<Token<'a>, Token<'a>>> {
+    fn pull_unquoted_string(&mut self) -> Result<Token<'a>, Error<Token<'a>, Token<'a>>> {
+
+        let mut iter = self.buf[self.offset..].char_indices().peekable();
 
         let idx = loop {
             let (idx, chr) = match iter.next() {
@@ -439,8 +433,7 @@ impl<'a> TokenStream<'a> {
             } else if chr == '#' {
                 break idx;
             } else if chr == '/' {
-                let mut sub_iter = iter.peekable();
-                if let Some((_, next_chr)) = sub_iter.peek() {
+                if let Some((_, next_chr)) = iter.peek() {
                     if *next_chr == '/' {
                         break idx;
                     }
@@ -570,6 +563,10 @@ mod tests {
         assert_eq!(parse_tokens("# comment"), vec![Token::Comment("# comment")]);
         assert_eq!(parse_tokens("# comment\r\n"), vec![Token::Comment("# comment"), Token::Newline]);
         assert_eq!(parse_tokens("# comment\n"), vec![Token::Comment("# comment"), Token::Newline]);
+
+        assert_eq!(parse_tokens("// comment"), vec![Token::Comment("// comment")]);
+        assert_eq!(parse_tokens("// comment\r\n"), vec![Token::Comment("// comment"), Token::Newline]);
+        assert_eq!(parse_tokens("// comment\n"), vec![Token::Comment("// comment"), Token::Newline]);
     }
 
     #[test]
@@ -586,7 +583,7 @@ mod tests {
     fn it_must_recognize_substitutions() {
         assert_eq!(parse_tokens("${?"), vec![Token::OptionalSubs]);
         assert_eq!(parse_tokens("${"), vec![Token::Subs]);
-        // TODO: regulat token
+        // TODO: regular token
     }
 
     #[test]
@@ -613,6 +610,8 @@ mod tests {
     fn it_must_recognize_unquoted_strings() {
         assert_eq!(parse_tokens("non-null"), vec![Token::Unquoted("non-null")]);
         assert_eq!(parse_tokens("non-null#comment"), vec![Token::Unquoted("non-null"), Token::Comment("#comment")]);
+        assert_eq!(parse_tokens("/sample/"), vec![Token::Unquoted("/sample/")]);
+        assert_eq!(parse_tokens("/sample/{"), vec![Token::Unquoted("/sample/"), Token::LeftBrace]);
     }
 
     #[test]
@@ -623,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn it_must_recognize_itegers() {
+    fn it_must_recognize_integers() {
         assert_eq!(parse_tokens("123"), vec![Token::Integer(123)]);
         assert_eq!(parse_tokens("-123"), vec![Token::Integer(-123)]);
         assert_eq!(parse_tokens("123 321"), vec![Token::Integer(123), Token::Integer(321)]);
