@@ -24,17 +24,13 @@ nat   = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 exp   = @{ ("E" | "e") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
 
 
-required_include_file      = { ^"required(" ~ ^"file(" ~ string ~ ")" ~ ")" }
-required_include_url       = { ^"required(" ~ ^"url(" ~ string ~ ")" ~ ")" }
-required_include_classpath = { ^"required(" ~ "classpath(" ~ string ~ ")" ~ ")" }
-required_include_string    = { ^"required(" ~ string ~ ")" }
-required_include           = { required_include_file | required_include_url | required_include_classpath | required_include_string }
 include_file               = { ^"file(" ~ string ~ ")" }
 include_url                = { ^"url(" ~ string ~ ")" }
 include_classpath          = { ^"classpath(" ~ string ~ ")" }
 include_string             = { string }
-normal_include             = { include_file | include_url | include_classpath | include_string }
-include                    = { ^"include" ~ NEWLINE* ~ (required_include | normal_include) }
+regular_include            = { include_file | include_url | include_classpath | include_string }
+required_include           = { ^"required(" ~ regular_include ~ ")" }
+include                    = { ^"include" ~ NEWLINE* ~ (required_include | regular_include) }
 
 // Strings
 mstring = ${ "\"\"\"" ~ minner ~ "\"\"\"" }

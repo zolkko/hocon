@@ -18,16 +18,16 @@ use self::error::HoconError;
 /// a user is asked to provide it's raw content to the parser.
 ///
 /// All the files are resolved
-pub enum IncludeKind {
-    SingleQuoted,
-    Url,
-    File,
-    Classpath
+pub enum IncludePath {
+    SingleQuoted(String),
+    Url(String),
+    File(String),
+    Classpath(String)
 }
 
 /// Type of handler function which must return content of a file/url to include.
 /// The first argument is a type of a resource to include and the second is a path or url.
-type IncludeHandler = for<'a> fn (IncludeKind, &'a str) -> Result<String, Box<dyn Error>>;
+type IncludeHandler = for<'a> fn (IncludePath) -> Result<String, Box<dyn Error>>;
 
 /// Parser object
 #[derive(Parser)]
@@ -119,7 +119,7 @@ impl HoconParser {
     /// An object's body is a list of field with their corresponding values.
     fn parse_object_body(&self, rule: Pair<Rule>) -> Value {
 
-        let mut result = HashMap::default();
+        let result = HashMap::default();
 
         let inner = rule.into_inner();
         println!("detected result: {:#?}", inner);
@@ -132,7 +132,7 @@ impl HoconParser {
                 },
                 Rule::include => {
                     println!("processing an include");
-                    if let Some(included_object) = self.parse_include(pair) {
+                    if let Some(included_object) = self.process_include(pair) {
                         // TODO: merge included object into result
                     }
                 }
@@ -164,43 +164,103 @@ impl HoconParser {
         Value::Object(result)
     }
 
-    fn parse_include(&self, include: Pair<Rule>) -> Option<HashMap<String, Value>> {
+    fn process_include(&self, include: Pair<Rule>) -> Option<HashMap<String, Value>> {
         let result = HashMap::default();
-        let pair = include.into_inner().next().unwrap();
+        let pair = include.into_inner().next().expect("regular include or required include, malformed grammar");
 
         match pair.as_rule() {
             Rule::required_include => {
-                println!("required include");
                 if let Some(ref handler) = self.include_handler {
+                    let pair = pair.into_inner().next().expect("regular_include");
+                    self.process_regular_include(pair, handler)
                 } else {
-                    panic!("include is required");
+                    panic!("required include");
                 }
             }
-            Rule::normal_include => {
-                println!("normal include");
+            Rule::regular_include => {
                 if let Some(ref handler) = self.include_handler {
-
-                    let inc = pair.into_inner().next().expect(r#"malformed "normal_include" grammar rule"#);
-
-                    let kind = match inc.as_rule() {
-                        Rule::include_file => IncludeKind::File,
-                        Rule::include_url => IncludeKind::Url,
-                        Rule::include_classpath => IncludeKind::Classpath,
-                        Rule::include_string => IncludeKind::SingleQuoted,
-                        _ => unreachable!()
-                    };
-
-                    let resource_path = inc.into_inner().next().expect("malformed grammar").into_inner().as_str();
-                    let res = handler(kind, resource_path);
+                    self.process_regular_include(pair, handler)
                 }
             }
-            _ => unreachable!()
+            _ => {
+                panic!("expected required include or regular include")
+            }
         }
 
         Some(result)
     }
-}
 
+    fn process_regular_include(&self, regular_include: Pair<Rule>, handler: &IncludeHandler) {
+        let include_kind = self.extract_include_path(regular_include).expect("propagate the error");
+        let obj = handler(include_kind);
+    }
+
+    /// Takes a tokens recognized by the `regular_include` grammar rule
+    /// and extracts an include path.
+    fn extract_include_path(&self, pair: Pair<Rule>) -> Result<IncludePath, HoconError<Rule>> {
+        let position = pair.as_span().start_pos().line_col();
+        let include_kind = if let Some(ik) = pair.into_inner().next() {
+            ik
+        } else {
+            return Err((position, "include directive must be followed by either file(), url(), classpath() or single-quoted string").into())
+        };
+
+        let position = include_kind.as_span().start_pos().line_col();
+        match include_kind.as_rule() {
+            Rule::include_file => {
+                let maybe_string = include_kind.into_inner().next();
+                if let Some(string) = maybe_string {
+                    let value = self.extract_string(string)?;
+                    Ok(IncludePath::File(value))
+                } else {
+                    Err((position, "include file() directive must contain a single-quoted string").into())
+                }
+            },
+            Rule::include_url => {
+                let maybe_string = include_kind.into_inner().next();
+                if let Some(string) = maybe_string {
+                    let value = self.extract_string(string)?;
+                    Ok(IncludePath::Url(value))
+                } else {
+                    Err((position, "include url() directive must contain a single-quoted string").into())
+                }
+            },
+            Rule::include_classpath => {
+                let maybe_string = include_kind.into_inner().next();
+                if let Some(string) = maybe_string {
+                    let value = self.extract_string(string)?;
+                    Ok(IncludePath::Classpath(value))
+                } else {
+                    Err((position, "include classpath() directive must contain a single-quoted string").into())
+                }
+            },
+            Rule::include_string => {
+                let maybe_string = include_kind.into_inner().next();
+                if let Some(string) = maybe_string {
+                    let value = self.extract_string(string)?;
+                    Ok(IncludePath::SingleQuoted(value))
+                } else {
+                    Err((position, "single-quoted include directive must contain a single-quoted string").into())
+                }
+            },
+            _ => {
+                Err((position, "include directive must be followed by either file(), url(), classpath() or single-quoted string").into())
+            }
+        }
+    }
+
+    /// Extracts a string from a `string` or a multi-line string rules.
+    fn extract_string(&self, string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
+        let position = string.as_span().start_pos().line_col();
+        let mut inners = string.into_inner();
+        if let Some(inner) = inners.next() {
+            // TODO(zolkko): unescape the value
+            Ok(inner.as_str().to_owned())
+        } else {
+            Err((position, "string must have a content").into())
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -210,7 +270,7 @@ mod tests {
 
     #[test]
     fn runme() {
-        let parser = HoconParser { include_handler: Some(|k, s| Ok(" empty-string ".to_owned())) };
+        let parser = HoconParser { include_handler: Some(|_k| Ok(" empty-string ".to_owned())) };
         let val = parser.parse_str(r###"
 
 [1, 2, 3.14, {

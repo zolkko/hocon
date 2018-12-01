@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
 
+pub type Object = HashMap<String, Value>;
+
+pub type Array = Vec<Value>;
+
 #[derive(Debug)]
 pub enum Value {
     Null,
@@ -8,6 +12,6 @@ pub enum Value {
     Integer(isize),
     Float(f64),
     String(String),
-    Array(Vec<Value>),
-    Object(HashMap<String, Value>),
+    Array(Array),
+    Object(Object),
 }
