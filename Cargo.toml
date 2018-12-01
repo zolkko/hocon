@@ -2,9 +2,9 @@
 name = "hocon"
 version = "0.1.0"
 authors = ["zolkko <zolkko@gmail.com>"]
+edition = "2018"
 
 [dependencies]
-combine = "~3.3.5"
-failure = "~0.1.1"
+pest = "2.0.2"
+pest_derive = "2.0.1"
 
-[dev-dependencies]
