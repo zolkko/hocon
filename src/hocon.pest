@@ -1,0 +1,137 @@
+// The same as in a regular JSON.
+WHITESPACE = _{ " " | "\t" }
+
+// Comments does not consume newline character because in some cases they may be used
+// as separators between object fields and array elements.
+COMMENT    = _{ ("//" | "#") ~ (!NEWLINE ~ ANY)* ~ &(NEWLINE | EOI) }
+
+// Arrays' elements and object fields can be separated by enters or commas.
+// But a user can use multiple enters as a separator, or even surround a comma by multiple
+// newline characters (sequences).
+separator  = _{ (NEWLINE+ ~ ","? ~ NEWLINE*) | ("," ~ NEWLINE*) }
+
+// Special symbols
+bool_true  = @{ ^"true" | ^"yes" | ^"y" | ^"t" }
+bool_false = @{ ^"false" | ^"no" | ^"n" | ^"f" }
+bool       = _{ bool_true | bool_false }
+
+null       = @{ ^"null" }
+
+// Numbers can be either integers or doubles.
+int   = @{ "-"? ~ nat }
+float = @{ "-"? ~ nat ~ ("." ~ ASCII_DIGIT+ ~ exp? | exp)? }
+nat   = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+exp   = @{ ("E" | "e") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
+
+
+required_include_file      = { ^"required(" ~ ^"file(" ~ string ~ ")" ~ ")" }
+required_include_url       = { ^"required(" ~ ^"url(" ~ string ~ ")" ~ ")" }
+required_include_classpath = { ^"required(" ~ "classpath(" ~ string ~ ")" ~ ")" }
+required_include_string    = { ^"required(" ~ string ~ ")" }
+required_include           = { required_include_file | required_include_url | required_include_classpath | required_include_string }
+include_file               = { ^"file(" ~ string ~ ")" }
+include_url                = { ^"url(" ~ string ~ ")" }
+include_classpath          = { ^"classpath(" ~ string ~ ")" }
+include_string             = { string }
+normal_include             = { include_file | include_url | include_classpath | include_string }
+include                    = { ^"include" ~ NEWLINE* ~ (required_include | normal_include) }
+
+// Strings
+mstring = ${ "\"\"\"" ~ minner ~ "\"\"\"" }
+minner  = @{ (!("\"\"\"") ~ ANY)* }
+string  = ${ "\"" ~ sinner ~ "\"" }
+sinner  = @{ (!("\"" | "\\") ~ ANY)* ~ (escape ~ sinner)? }
+escape  = @{ "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | unicode) }
+unicode = @{ "u" ~ ASCII_HEX_DIGIT{4} }
+
+// Field name and paths.
+path_delimiter = _{ "." }
+field_name     = @{ string | (("_" | ASCII_ALPHA) ~ (ASCII_ALPHANUMERIC | "_" | "-")*) }
+field_path     = { field_name ~ (path_delimiter ~ field_name)* }
+
+// Substitution can be either optional or required. Inside the brackets a variable's name expected.
+optional_subs_start   = _{ "${?" }
+required_subs_start   = _{ "${" }
+subs_end              = _{ "}" }
+optional_substitution = { optional_subs_start ~ field_path ~ subs_end }
+required_substitution = { required_subs_start ~ field_path ~ subs_end }
+substitution          = { optional_substitution | required_substitution }
+
+// A substitution placeholder cannot be inside a raw string.
+array_element_end  = _{ NEWLINE | EOI | "//" | "#" | "," | "]" }
+object_element_end = _{ NEWLINE | EOI | "//" | "#" | "}" }
+root_element_end   = _{ NEWLINE | EOI | "//" | "#" }
+
+array_raw_string   = { (!array_element_end ~ ANY)+ }
+object_raw_string  = { (!object_element_end ~ ANY)+ }
+root_raw_string    = { (!root_element_end ~ ANY)+ }
+
+// An empty value of an object's field.
+object_empty_value = { &object_element_end }
+root_empty_value   = { &root_element_end }
+
+// We forbid substitutions in unquoted strings.
+// Empty values are forbidden inside arrays.
+typed_value = {
+    ((mstring | string) ~ substitution?)+ |
+    (array ~ substitution?)+ |
+    (object ~ substitution?)+ |
+    (substitution ~ typed_value?)
+}
+
+array_value = _{
+    null |
+    bool |
+    (int ~ &array_element_end) |
+    (float ~ &array_element_end) |
+    ((mstring | string) ~ substitution?)+ |
+    (array ~ substitution?)+ |
+    (object ~ substitution?)+ |
+    (substitution ~ typed_value?) |
+    array_raw_string
+}
+
+object_value = _{
+    null |
+    bool |
+    (int ~ &object_element_end) |
+    (float ~ &object_element_end) |
+    ((mstring | string) ~ substitution?)+ |
+    (array ~ substitution?)+ |
+    (object ~ substitution?)+ |
+    (substitution ~ typed_value?) |
+    object_empty_value |
+    object_raw_string
+}
+
+root_value = _{
+    null |
+    bool |
+    (int ~ &root_element_end) |
+    (float ~ &root_element_end) |
+    ((mstring | string) ~ substitution?)+ |
+    (array ~ substitution?)+ |
+    (object ~ substitution?)+ |
+    (substitution ~ typed_value?) |
+    root_empty_value |
+    root_raw_string
+}
+
+array = { "[" ~ NEWLINE* ~ array_value ~ (separator ~ array_value)* ~ (separator)? ~ "]" | "[" ~ NEWLINE* ~ "]" }
+
+field_assign = @{ "=" | ":" }
+field_append = @{ "+=" }
+
+field        = { field_path ~ (((field_assign | field_append) ~ object_value) | object) }
+object_body  = { (field | include) ~ (separator ~ (field | include))* ~ separator? }
+object       = { "{" ~ NEWLINE* ~ object_body? ~ NEWLINE* ~ "}" }
+
+root_field   = { field_path ~ (((field_assign | field_append) ~ root_value) | object) }
+root_body    = { (root_field | include) ~ (separator ~ (root_field | include))* ~ separator? }
+
+
+// Empty documents are forbidden by the hocon specification
+root         = { SOI ~ NEWLINE* ~ (array | object | root_body)? ~ NEWLINE* ~ EOI }
+
+// Included documents cannot contain an array as a start element.
+include_root = { SOI ~ NEWLINE* ~ (object | root_body)? ~ NEWLINE* ~ EOI }
