@@ -3,14 +3,14 @@ use std::error::Error;
 
 
 use pest::Parser;
-use pest::iterators::Pair;
+use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
 
 
 mod error;
 mod value;
 
-use self::value::Value;
+use self::value::{Array, Object, Value};
 use self::error::HoconError;
 
 
@@ -47,9 +47,33 @@ impl HoconParser {
         match pair.as_rule() {
             Rule::array => Ok(self.parse_array(pair)),
             Rule::object => unimplemented!(),
-            Rule::root_body => unimplemented!(),
+            Rule::object_body => unimplemented!(),
             _ => unimplemented!()
         }
+    }
+
+    fn parse_include_root(&self, input: &str) -> Result<Value, HoconError<Rule>> {
+        let mut pairs = HoconParser::parse(Rule::include_root, input)?;
+
+        if let Some(pair) = pairs.next() {
+            match pair.as_rule() {
+                Rule::object => {
+                    unimplemented!()
+                }
+                Rule::object_body => {
+                    self.process_object_body(pair, None);
+                    unimplemented!()
+                }
+                _ => {
+                    Err(((0, 0), "root element of an included file must be an object").into())
+                }
+            }
+        } else {
+            Err(((0, 0), "included file must not be empty").into())
+        }
+    }
+
+    fn process_object_body(&self, pair: Pair<Rule>, mut ctx: Option<Object>) {
     }
 
     fn parse_array(&self, rule: Pair<Rule>) -> Value {
@@ -84,9 +108,6 @@ impl HoconParser {
                 Rule::mstring => {
                     let content = pair.into_inner();
                     Value::String(content.as_str().to_owned())
-                }
-                Rule::array_raw_string => {
-                    Value::String(pair.as_str().to_owned())
                 }
                 Rule::array => {
                     self.parse_array(pair)
@@ -190,13 +211,24 @@ impl HoconParser {
         Some(result)
     }
 
+    /// Extracts a string from a `string` or a `multi-line string` rules.
+    fn extract_string(&self, string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
+        let position = string.as_span().start_pos().line_col();
+        let mut inners = string.into_inner();
+        if let Some(inner) = inners.next() {
+            // TODO(zolkko): unescape the value
+            Ok(inner.as_str().to_owned())
+        } else {
+            Err((position, "string must have a content").into())
+        }
+    }
+
     fn process_regular_include(&self, regular_include: Pair<Rule>, handler: &IncludeHandler) {
         let include_kind = self.extract_include_path(regular_include).expect("propagate the error");
         let obj = handler(include_kind);
     }
 
-    /// Takes a tokens recognized by the `regular_include` grammar rule
-    /// and extracts an include path.
+    /// Takes tokens recognized by the `regular_include` grammar rule and extracts an include path.
     fn extract_include_path(&self, pair: Pair<Rule>) -> Result<IncludePath, HoconError<Rule>> {
         let position = pair.as_span().start_pos().line_col();
         let include_kind = if let Some(ik) = pair.into_inner().next() {
@@ -249,51 +281,256 @@ impl HoconParser {
         }
     }
 
-    /// Extracts a string from a `string` or a multi-line string rules.
-    fn extract_string(&self, string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
-        let position = string.as_span().start_pos().line_col();
-        let mut inners = string.into_inner();
-        if let Some(inner) = inners.next() {
-            // TODO(zolkko): unescape the value
-            Ok(inner.as_str().to_owned())
-        } else {
-            Err((position, "string must have a content").into())
+    fn assign_value(&self, map: &mut HashMap<String, Value>, keys: &[&str], value: Value) {
+        if keys.len() == 1 {
+            let key = keys[0];
+            map.insert(key.to_owned(), value);
+        } else if keys.len() > 1 {
+            if let Some((&key, tail)) = keys.split_first() {
+                if !map.contains_key(key) {
+                    map.insert(key.to_owned(), Value::Object(HashMap::default()));
+                }
+
+                if let Some(Value::Object(sub_obj)) = map.get_mut(key) {
+                    self.assign_value(sub_obj, tail, value);
+                }
+            }
         }
     }
+}
+
+/// According to the hocon documentation, the merge must be performed only on object.
+/// - keys and values of the second object must be added to the first object;
+/// - if a key exists in both objects and their values are sub-objects, then they must be
+///   merged recursively.
+fn merge_objects(first: &mut Object, second: &Object) {
+    for (k, v) in second {
+        if let Value::Object(from) = v {
+            if let Some(Value::Object(to)) = first.get_mut(k) {
+                merge_objects(to, from);
+            } else {
+                first.insert(k.to_owned(), v.clone());
+            }
+        } else {
+            first.insert(k.to_owned(), v.clone());
+        }
+    }
+}
+
+/// Extracts a string from a `string` or a `multi-line string` rules.
+fn extract_string(string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
+    let position = string.as_span().start_pos().line_col();
+    let mut inners = string.into_inner();
+    if let Some(inner) = inners.next() {
+        // TODO(zolkko): unescape the value
+        Ok(inner.as_str().to_owned())
+    } else {
+        Err((position, "a string must have a content").into())
+    }
+}
+
+/// Process `value` gramma rule by concatenating a list of item into a single value.
+/// This function also resolves substitutions.
+fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
+    let value_chunks = value.into_inner();
+    let mut input = value_chunks.clone();
+
+    if let Some(pair) = input.next() {
+        let position = pair.as_span().start_pos().line_col();
+
+        match pair.as_rule() {
+            Rule::null => {
+                return Ok(Value::Null)
+            }
+            Rule::bool_true => {
+                return Ok(Value::Bool(true))
+            }
+            Rule::bool_false => {
+                return Ok(Value::Bool(false))
+            }
+            Rule::float => {
+                let value = match pair.as_str().parse() {
+                    Ok(v) => v,
+                    Err(error) => return Err((position, error).into())
+                };
+                return Ok(Value::Float(value))
+            }
+            Rule::int => {
+                let value = match pair.as_str().parse() {
+                    Ok(v) => v,
+                    Err(error) => return Err((position, error).into())
+                };
+                return Ok(Value::Integer(value))
+            }
+            Rule::unquoted_string => {
+                let span = pair.as_span();
+                return concatenate_str(String::new(), Some((span.start(), span.end())), input, value_chunks.as_str(), span.start());
+            }
+            Rule::string | Rule::mstring => {
+                let span = pair.as_span();
+                let mut result = extract_string(pair)?.to_owned();
+                return concatenate_str(result, None, input, value_chunks.as_str(), span.start());
+            }
+            Rule::array => {
+                let mut array = extract_array(pair)?;
+                return concatenate_array(array, input);
+            }
+            Rule::object => {
+                return concatenate_object(Object::default(), input);
+            }
+            Rule::substitution => {
+                unimplemented!()
+            }
+            _ => {
+                unreachable!("grammar rule definitions do not correspond to the source code")
+            }
+        }
+    } else {
+        Ok(Value::Null)
+    }
+}
+
+fn concatenate_object(mut result: Object, input: Pairs<Rule>) -> Result<Value, HoconError<Rule>> {
+    for pair in input {
+        let position = pair.as_span().start_pos().line_col();
+        match pair.as_rule() {
+            Rule::object => {}
+            Rule::substitution => {}
+            _ => {
+                return Err((position, "cannot concatenate the value, expected an object").into());
+            }
+        }
+    }
+
+    Ok(Value::Object(result))
+}
+
+fn concatenate_array(mut result: Array, input: Pairs<Rule>) -> Result<Value, HoconError<Rule>> {
+    for pair in input {
+        let position = pair.as_span().start_pos().line_col();
+        match pair.as_rule() {
+            Rule::array => {
+                result.extend(extract_array(pair)?);
+            }
+            Rule::substitution => {
+                unimplemented!()
+            }
+            _ => {
+                return Err((position, "cannot concatenate the value, expected an array").into());
+            }
+        }
+    }
+    Ok(Value::Array(result))
+}
+
+/// Because `span` start and end positions are relative to entire input, here I also
+/// pass an offset argument.
+fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>, input: Pairs<Rule>, str_value: &str, offset: usize) -> Result<Value, HoconError<Rule>> {
+
+    for pair in input {
+
+        let position = pair.as_span().start_pos().line_col();
+
+        match pair.as_rule() {
+            Rule::unquoted_string => {
+                unquoted_seq = match unquoted_seq {
+                    Some((s, e)) => Some((s, pair.as_span().end())),
+                    None => {
+                        let span = pair.as_span();
+                        Some((span.start(), span.end()))
+                    }
+                };
+            }
+            Rule::string | Rule::mstring => {
+
+                if let Some((s, e)) = unquoted_seq {
+                    result += &str_value[(s - offset)..(e - offset)];
+                    unquoted_seq = None;
+                }
+
+                result += &extract_string(pair)?;
+            }
+            Rule::substitution => {
+                unimplemented!()
+            }
+            _ => {
+                return Err((position, "cannot concatenate the value, expected s string").into());
+            }
+        }
+    }
+
+    if let Some((s, e)) = unquoted_seq {
+        result += &str_value[(s - offset)..(e - offset)];
+    }
+
+    Ok(Value::String(result))
+}
+
+fn extract_array(array: Pair<Rule>) -> Result<Array, HoconError<Rule>> {
+    let mut result: Array = Array::default();
+    let array_values = array.into_inner();
+    for array_item in array_values {
+        let value = concatenate_value(array_item)?;
+        result.push(value);
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
 
+    use pest::{parses_to, consumes_to};
     use super::*;
 
+    #[test]
+    fn test_parse_array() {
+        parses_to! {
+            parser: HoconParser,
+            input: r#"[1, 2, 3]"#,
+            rule:   Rule::array,
+            tokens: [
+                array(0, 9, [
+                    int(1, 2),
+                    int(4, 5),
+                    int(7, 8)
+                ])
+            ]
+        };
+    }
 
     #[test]
-    fn runme() {
-        let parser = HoconParser { include_handler: Some(|_k| Ok(" empty-string ".to_owned())) };
-        let val = parser.parse_str(r###"
+    fn test_extract_simple_array() {
 
-[1, 2, 3.14, {
+        let mut array_pair = HoconParser::parse(Rule::array, r#"[1, foo   bar ": hello all "  quo "ted", 3]"#)
+            .expect("must parse the array");
 
-// the body of the object
-first_field = 1
-second_field = 2
-include file("some/file.hocon")
-third_field += 3
-four_field : 4
-with_subobject {
-  // this is sub object
-}
+        let mut array = Array::default();
+        let array = extract_array(array_pair.next().unwrap())
+            .expect("must extract an array");
 
-}, "", true, [3, 2, 1], null
-// this is a comment line
- """multi-line string""", raw string , 4
+        assert_eq!(array, vec![
+            Value::Integer(1),
+            Value::String("foo   bar: hello all quoted".to_owned()),
+            Value::Integer(3)
+        ]);
+    }
 
+    #[test]
+    fn test_extract_array_value() {
+        let mut value_pairs = HoconParser::parse(Rule::value, r#"[1, 2, 3] [4, 5, 6]"#)
+            .expect("must parse the value");
 
-, ]
+        let value_pair = value_pairs.next().expect("value expected");
 
-"###);
-        println!("{:?}", val);
-        assert!(false);
+        let value = concatenate_value(value_pair).expect("must concatenate");
+
+        assert_eq!(value, Value::Array(vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(4),
+            Value::Integer(5),
+            Value::Integer(6)
+        ]));
     }
 }

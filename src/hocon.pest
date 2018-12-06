@@ -23,16 +23,19 @@ float = @{ "-"? ~ nat ~ ("." ~ ASCII_DIGIT+ ~ exp? | exp)? }
 nat   = @{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 exp   = @{ ("E" | "e") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
 
-
-include_file               = { ^"file(" ~ string ~ ")" }
-include_url                = { ^"url(" ~ string ~ ")" }
-include_classpath          = { ^"classpath(" ~ string ~ ")" }
-include_string             = { string }
-regular_include            = { include_file | include_url | include_classpath | include_string }
-required_include           = { ^"required(" ~ regular_include ~ ")" }
-include                    = { ^"include" ~ NEWLINE* ~ (required_include | regular_include) }
+include_file        = { ^"file(" ~ string ~ ")" }
+include_url         = { ^"url(" ~ string ~ ")" }
+include_classpath   = { ^"classpath(" ~ string ~ ")" }
+include_string      = { string }
+regular_include     = { include_file | include_url | include_classpath | include_string }
+required_include    = { ^"required(" ~ regular_include ~ ")" }
+include             = { ^"include" ~ NEWLINE* ~ (required_include | regular_include) }
 
 // Strings
+unquoted_string_end = _{ "//" | WHITESPACE | "$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "," | "+" | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" }
+unquoted_string     = @{ (!unquoted_string_end ~ ANY)+ }
+
+
 mstring = ${ "\"\"\"" ~ minner ~ "\"\"\"" }
 minner  = @{ (!("\"\"\"") ~ ANY)* }
 string  = ${ "\"" ~ sinner ~ "\"" }
@@ -54,80 +57,34 @@ required_substitution = { required_subs_start ~ field_path ~ subs_end }
 substitution          = { optional_substitution | required_substitution }
 
 // A substitution placeholder cannot be inside a raw string.
-array_element_end  = _{ NEWLINE | EOI | "//" | "#" | "," | "]" }
-object_element_end = _{ NEWLINE | EOI | "//" | "#" | "}" }
-root_element_end   = _{ NEWLINE | EOI | "//" | "#" }
+element_end = _{ NEWLINE | EOI | "//" | "#" | "," | "]" | "}" }
 
-array_raw_string   = { (!array_element_end ~ ANY)+ }
-object_raw_string  = { (!object_element_end ~ ANY)+ }
-root_raw_string    = { (!root_element_end ~ ANY)+ }
-
-// An empty value of an object's field.
-object_empty_value = { &object_element_end }
-root_empty_value   = { &root_element_end }
-
-// We forbid substitutions in unquoted strings.
-// Empty values are forbidden inside arrays.
-typed_value = {
-    ((mstring | string) ~ substitution?)+ |
-    (array ~ substitution?)+ |
-    (object ~ substitution?)+ |
-    (substitution ~ typed_value?)
+value_chunk = _{
+    (null ~ &element_end) |
+    (bool ~ &element_end) |
+    (int ~ &element_end) |
+    (float ~ &element_end) |
+    (mstring ~ value_chunk?) |
+    (string ~ value_chunk?) |
+    (array ~ value_chunk?) |
+    (object ~ value_chunk?) |
+    (substitution ~ value_chunk?) |
+    (unquoted_string ~ value_chunk?)
 }
+value = { value_chunk }
 
-array_value = _{
-    null |
-    bool |
-    (int ~ &array_element_end) |
-    (float ~ &array_element_end) |
-    ((mstring | string) ~ substitution?)+ |
-    (array ~ substitution?)+ |
-    (object ~ substitution?)+ |
-    (substitution ~ typed_value?) |
-    array_raw_string
-}
+array = { "[" ~ NEWLINE* ~ value ~ (separator ~ value)* ~ (separator)? ~ "]" | "[" ~ NEWLINE* ~ "]" }
 
-object_value = _{
-    null |
-    bool |
-    (int ~ &object_element_end) |
-    (float ~ &object_element_end) |
-    ((mstring | string) ~ substitution?)+ |
-    (array ~ substitution?)+ |
-    (object ~ substitution?)+ |
-    (substitution ~ typed_value?) |
-    object_empty_value |
-    object_raw_string
-}
+field_assign     = @{ "=" | ":" }
+field_append     = @{ "+=" }
+field            = { field_path ~ (((field_assign | field_append) ~ value) | object) }
 
-root_value = _{
-    null |
-    bool |
-    (int ~ &root_element_end) |
-    (float ~ &root_element_end) |
-    ((mstring | string) ~ substitution?)+ |
-    (array ~ substitution?)+ |
-    (object ~ substitution?)+ |
-    (substitution ~ typed_value?) |
-    root_empty_value |
-    root_raw_string
-}
-
-array = { "[" ~ NEWLINE* ~ array_value ~ (separator ~ array_value)* ~ (separator)? ~ "]" | "[" ~ NEWLINE* ~ "]" }
-
-field_assign = @{ "=" | ":" }
-field_append = @{ "+=" }
-
-field        = { field_path ~ (((field_assign | field_append) ~ object_value) | object) }
-object_body  = { (field | include) ~ (separator ~ (field | include))* ~ separator? }
-object       = { "{" ~ NEWLINE* ~ object_body? ~ NEWLINE* ~ "}" }
-
-root_field   = { field_path ~ (((field_assign | field_append) ~ root_value) | object) }
-root_body    = { (root_field | include) ~ (separator ~ (root_field | include))* ~ separator? }
-
+field_or_include = _{ field | include }
+object_body      = { field_or_include ~ (separator ~ field_or_include)* ~ separator? }
+object           = { "{" ~ NEWLINE* ~ object_body? ~ NEWLINE* ~ "}" }
 
 // Empty documents are forbidden by the hocon specification
-root         = { SOI ~ NEWLINE* ~ (array | object | root_body)? ~ NEWLINE* ~ EOI }
+root             = { SOI ~ NEWLINE* ~ (array | object | object_body)? ~ NEWLINE* ~ EOI }
 
 // Included documents cannot contain an array as a start element.
-include_root = { SOI ~ NEWLINE* ~ (object | root_body)? ~ NEWLINE* ~ EOI }
+include_root     = { SOI ~ NEWLINE* ~ (object | object_body)? ~ NEWLINE* ~ EOI }

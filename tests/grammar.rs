@@ -1,6 +1,5 @@
 #![recursion_limit="67"]
 
-extern crate combine;
 extern crate hocon;
 
 

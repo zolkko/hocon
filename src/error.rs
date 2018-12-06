@@ -1,5 +1,6 @@
 use std::fmt;
 use std::error::Error;
+use std::num::{ParseIntError, ParseFloatError};
 
 use pest::RuleType;
 use pest::error::{Error as PestError};
@@ -20,7 +21,9 @@ impl fmt::Display for Position {
 #[derive(Debug)]
 enum ErrorKind<R> where R: RuleType {
     Grammar(Position, &'static str),
-    PestError(PestError<R>)
+    PestError(PestError<R>),
+    IntError(Position, ParseIntError),
+    FloatError(Position, ParseFloatError),
 }
 
 #[derive(Debug)]
@@ -33,6 +36,8 @@ impl<R: RuleType> fmt::Display for HoconError<R> {
         match self.kind {
             ErrorKind::Grammar(ref pos, ref descr) => write!(f, "{} {}", pos, descr),
             ErrorKind::PestError(ref error) => write!(f, "{}", error),
+            ErrorKind::IntError(ref pos, ref error) => write!(f, "{} {}", pos, error),
+            ErrorKind::FloatError(ref pos, ref error) => write!(f, "{} {}", pos, error),
         }
     }
 }
@@ -50,5 +55,19 @@ impl<R: RuleType> From<((usize, usize), &'static str)> for HoconError<R> {
     fn from(value: ((usize, usize), &'static str)) -> Self {
         let ((line, column), description) = value;
         HoconError { kind: ErrorKind::Grammar( Position { line, column }, description) }
+    }
+}
+
+impl<R: RuleType> From<((usize, usize), ParseIntError)> for HoconError<R> {
+    fn from(value: ((usize, usize), ParseIntError)) -> Self {
+        let ((line, column), error) = value;
+        HoconError { kind: ErrorKind::IntError( Position { line, column }, error) }
+    }
+}
+
+impl<R: RuleType> From<((usize, usize), ParseFloatError)> for HoconError<R> {
+    fn from(value: ((usize, usize), ParseFloatError)) -> Self {
+        let ((line, column), error) = value;
+        HoconError { kind: ErrorKind::FloatError( Position { line, column }, error) }
     }
 }

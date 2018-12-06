@@ -5,7 +5,7 @@ pub type Object = HashMap<String, Value>;
 
 pub type Array = Vec<Value>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
     Bool(bool),
