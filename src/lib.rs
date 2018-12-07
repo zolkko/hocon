@@ -43,18 +43,30 @@ impl Default for HoconParser {
 }
 
 impl HoconParser {
+
+    /// Parses a string slice into owned hocon object.
+    /// Similar to JSON format, Hocon allows arrays and objects to be defined on the top level.
     pub fn parse_str(&self, input: &str) -> Result<Value, HoconError<Rule>> {
         let mut parsed = HoconParser::parse(Rule::root, input)?;
 
-        let mut root_pair = parsed.next().unwrap(); // TODO(zolkko): HoconError
+        let mut root_pair = parsed.next().unwrap();
         let mut pairs = root_pair.into_inner();
         let pair = pairs.next().unwrap();
 
         match pair.as_rule() {
-            Rule::array => Ok(self.parse_array(pair)),
-            Rule::object => unimplemented!(),
-            Rule::object_body => unimplemented!(),
-            _ => unimplemented!()
+            Rule::array => {
+                let array = extract_array(pair)?;
+                Ok(Value::Array(array))
+            },
+            Rule::object => {
+                let object = extract_object(pair)?.unwrap_or_else(|| Object::default());
+                Ok(Value::Object(object))
+            },
+            Rule::object_body => {
+                let object = extract_object_body(pair)?;
+                Ok(Value::Object(object))
+            },
+            _ => unreachable!("root grammar rule does not correspond to processing logic")
         }
     }
 
@@ -575,7 +587,7 @@ mod tests {
         let pairs = HoconParser::parse(Rule::root, AKKA_CONF);
 
         println!("{:#?}", pairs);
-        assert!(false);
+        //assert!(false);
     }
 
 
