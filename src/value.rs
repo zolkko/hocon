@@ -35,6 +35,12 @@ pub trait ObjectOps {
     /// The function will return an error, if the target is not an array or
     /// intermediate fields are not objects.
     fn append_value(&mut self, path: &[String], value: Value) -> Result<(), AppendError>;
+
+    /// According to the hocon documentation, the merge must be performed only on object.
+    /// - keys and values of the second object must be added to the first object;
+    /// - if a key exists in both objects and their values are sub-objects, then they must be
+    ///   merged recursively.
+    fn merge_object(&mut self, second: &Object);
 }
 
 impl ObjectOps for Object {
@@ -85,6 +91,20 @@ impl ObjectOps for Object {
             }
         } else {
             Err(AppendError { kind: AppendErrorKind::EmptyPath })
+        }
+    }
+
+    fn merge_object(&mut self, second: &Object) {
+        for (k, v) in second {
+            if let Value::Object(from) = v {
+                if let Some(Value::Object(to)) = self.get_mut(k) {
+                    to.merge_object(from);
+                } else {
+                    self.insert(k.to_owned(), v.clone());
+                }
+            } else {
+                self.insert(k.to_owned(), v.clone());
+            }
         }
     }
 }

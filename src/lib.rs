@@ -70,137 +70,24 @@ impl HoconParser {
         }
     }
 
-    fn parse_include_root(&self, input: &str) -> Result<Value, HoconError<Rule>> {
-        let mut pairs = HoconParser::parse(Rule::include_root, input)?;
+    fn parse_include_root(&self, input: &str) -> Result<Object, HoconError<Rule>> {
+        let mut parsed = HoconParser::parse(Rule::root, input)?;
 
-        if let Some(pair) = pairs.next() {
-            match pair.as_rule() {
-                Rule::object => {
-                    unimplemented!()
-                }
-                Rule::object_body => {
-                    self.process_object_body(pair, None);
-                    unimplemented!()
-                }
-                _ => {
-                    Err(((0, 0), "root element of an included file must be an object").into())
-                }
+        let mut root_pair = parsed.next().unwrap();
+        let mut pairs = root_pair.into_inner();
+        let pair = pairs.next().unwrap();
+
+        match pair.as_rule() {
+            Rule::object => {
+                Ok(extract_object(pair)?.unwrap_or_else(|| Object::default()))
             }
-        } else {
-            Err(((0, 0), "included file must not be empty").into())
-        }
-    }
-
-    fn process_object_body(&self, pair: Pair<Rule>, mut ctx: Option<Object>) {
-    }
-
-    fn parse_array(&self, rule: Pair<Rule>) -> Value {
-
-        let mut array: Vec<Value> = Vec::new();
-        let inner = rule.into_inner();
-
-        for pair in inner {
-
-            let value: Value = match pair.as_rule() {
-                Rule::null => {
-                    Value::Null
-                }
-                Rule::bool_true => {
-                    Value::Bool(true)
-                }
-                Rule::bool_false => {
-                    Value::Bool(false)
-                }
-                Rule::float => {
-                    let value = pair.as_str().parse().expect("cannot parse float");
-                    Value::Float(value)
-                }
-                Rule::int => {
-                    let value = pair.as_str().parse().expect("cannot parse integer");
-                    Value::Integer(value)
-                }
-                Rule::string => {
-                    let content= pair.into_inner();
-                    Value::String(content.as_str().to_owned())
-                }
-                Rule::mstring => {
-                    let content = pair.into_inner();
-                    Value::String(content.as_str().to_owned())
-                }
-                Rule::array => {
-                    self.parse_array(pair)
-                }
-                Rule::object => {
-                    self.parse_object(pair)
-                }
-                _ => {
-                    unimplemented!()
-                }
-            };
-
-            array.push(value);
-        }
-
-        Value::Array(array)
-    }
-
-    /// An object may not have a body.
-    /// In this case an empty object is returned to the caller.
-    fn parse_object(&self, rule: Pair<Rule>) -> Value {
-        let maybe_body = rule.into_inner().next();
-        if let Some(body) = maybe_body {
-            self.parse_object_body(body)
-        } else {
-            Value::Object(HashMap::default())
-        }
-    }
-
-    /// An object's body is a list of field with their corresponding values.
-    fn parse_object_body(&self, rule: Pair<Rule>) -> Value {
-
-        let result = HashMap::default();
-
-        let inner = rule.into_inner();
-        println!("detected result: {:#?}", inner);
-
-        for pair in inner {
-
-            match pair.as_rule() {
-                Rule::field => {
-                    println!("processing a field")
-                },
-                Rule::include => {
-                    println!("processing an include");
-                    if let Some(included_object) = self.process_include(pair) {
-                        // TODO: merge included object into result
-                    }
-                }
-                _ => unreachable!()
+            Rule::object_body => {
+                Ok(extract_object_body(pair)?)
             }
-
-            /*
-            let mut content = field.into_inner();
-            let field_name = content.next().unwrap();
-            let nxt = content.next().unwrap();
-
-            match nxt.as_rule() {
-                Rule::field_assign => {
-                    println!("assigning a value")
-                }
-                Rule::field_append => {
-                    println!("appending a value")
-                }
-                Rule::object => {
-                    println!("inplace definition")
-                }
-                _ => {
-                    unreachable!()
-                }
+            _ => {
+                Err(((0, 0), "root element of an included file must be an object").into())
             }
-            */
         }
-
-        Value::Object(result)
     }
 
     fn process_include(&self, include: Pair<Rule>) -> Option<HashMap<String, Value>> {
@@ -289,24 +176,6 @@ impl HoconParser {
 
 }
 
-/// According to the hocon documentation, the merge must be performed only on object.
-/// - keys and values of the second object must be added to the first object;
-/// - if a key exists in both objects and their values are sub-objects, then they must be
-///   merged recursively.
-fn merge_objects(first: &mut Object, second: &Object) {
-    for (k, v) in second {
-        if let Value::Object(from) = v {
-            if let Some(Value::Object(to)) = first.get_mut(k) {
-                merge_objects(to, from);
-            } else {
-                first.insert(k.to_owned(), v.clone());
-            }
-        } else {
-            first.insert(k.to_owned(), v.clone());
-        }
-    }
-}
-
 /// Extracts a string from a `string` or a `multi-line string` rules.
 fn extract_string(string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
     let position = string.as_span().start_pos().line_col();
@@ -387,7 +256,7 @@ fn concatenate_object(mut result: Object, input: Pairs<Rule>) -> Result<Value, H
         match pair.as_rule() {
             Rule::object => {
                 if let Some(object) = extract_object(pair)? {
-                    merge_objects(&mut result, &object);
+                    result.merge_object(&object);
                 }
             }
             Rule::substitution => {
