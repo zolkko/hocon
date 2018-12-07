@@ -36,6 +36,12 @@ pub struct HoconParser {
     include_handler: Option<IncludeHandler>
 }
 
+impl Default for HoconParser {
+    fn default() -> Self {
+        HoconParser { include_handler: None }
+    }
+}
+
 impl HoconParser {
     pub fn parse_str(&self, input: &str) -> Result<Value, HoconError<Rule>> {
         let mut parsed = HoconParser::parse(Rule::root, input)?;
@@ -211,18 +217,6 @@ impl HoconParser {
         Some(result)
     }
 
-    /// Extracts a string from a `string` or a `multi-line string` rules.
-    fn extract_string(&self, string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
-        let position = string.as_span().start_pos().line_col();
-        let mut inners = string.into_inner();
-        if let Some(inner) = inners.next() {
-            // TODO(zolkko): unescape the value
-            Ok(inner.as_str().to_owned())
-        } else {
-            Err((position, "string must have a content").into())
-        }
-    }
-
     fn process_regular_include(&self, regular_include: Pair<Rule>, handler: &IncludeHandler) {
         let include_kind = self.extract_include_path(regular_include).expect("propagate the error");
         let obj = handler(include_kind);
@@ -242,7 +236,7 @@ impl HoconParser {
             Rule::include_file => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = self.extract_string(string)?;
+                    let value = extract_string(string)?;
                     Ok(IncludePath::File(value))
                 } else {
                     Err((position, "include file() directive must contain a single-quoted string").into())
@@ -251,7 +245,7 @@ impl HoconParser {
             Rule::include_url => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = self.extract_string(string)?;
+                    let value = extract_string(string)?;
                     Ok(IncludePath::Url(value))
                 } else {
                     Err((position, "include url() directive must contain a single-quoted string").into())
@@ -260,7 +254,7 @@ impl HoconParser {
             Rule::include_classpath => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = self.extract_string(string)?;
+                    let value = extract_string(string)?;
                     Ok(IncludePath::Classpath(value))
                 } else {
                     Err((position, "include classpath() directive must contain a single-quoted string").into())
@@ -269,7 +263,7 @@ impl HoconParser {
             Rule::include_string => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = self.extract_string(string)?;
+                    let value = extract_string(string)?;
                     Ok(IncludePath::SingleQuoted(value))
                 } else {
                     Err((position, "single-quoted include directive must contain a single-quoted string").into())
@@ -281,22 +275,6 @@ impl HoconParser {
         }
     }
 
-    fn assign_value(&self, map: &mut HashMap<String, Value>, keys: &[&str], value: Value) {
-        if keys.len() == 1 {
-            let key = keys[0];
-            map.insert(key.to_owned(), value);
-        } else if keys.len() > 1 {
-            if let Some((&key, tail)) = keys.split_first() {
-                if !map.contains_key(key) {
-                    map.insert(key.to_owned(), Value::Object(HashMap::default()));
-                }
-
-                if let Some(Value::Object(sub_obj)) = map.get_mut(key) {
-                    self.assign_value(sub_obj, tail, value);
-                }
-            }
-        }
-    }
 }
 
 /// According to the hocon documentation, the merge must be performed only on object.
@@ -590,26 +568,29 @@ mod tests {
     use pest::{parses_to, consumes_to};
     use super::*;
 
+    static AKKA_CONF: &'static str = include_str!("resources/akka.conf");
+
+    #[test]
+    fn test_akka() {
+        let pairs = HoconParser::parse(Rule::root, AKKA_CONF);
+
+        println!("{:#?}", pairs);
+        assert!(false);
+    }
+
 
     #[test]
     fn test_extract_object() {
-        let input = r#"{
-        field1 = 1
-        field3 {
-            sub_field1: 3, sub_field2: 4
-        }
-        field2: 2
-        field3.sub_field2: 5
-        field3.sub_field3 += 1
-        field3.sub_field3 += 2
-        field3.sub_field3 += 3
-        }"#;
+        let input = r#"requirements {
+        field1 =
+        akka.actor.mailbox.unbounded-queue-based   asdasd
+        field2 = akka.actor.mailbox.bounded-queue-based
+      }"#;
 
-        let mut obj_pair = HoconParser::parse(Rule::object, input).unwrap().next().unwrap();
+        let mut obj_pair = HoconParser::parse(Rule::root, input).unwrap().next().unwrap();
 
         let obj = extract_object(obj_pair);
         println!("{:#?}", obj);
-        assert!(false);
     }
 
 
@@ -630,9 +611,9 @@ mod tests {
             rule:   Rule::array,
             tokens: [
                 array(0, 9, [
-                    int(1, 2),
-                    int(4, 5),
-                    int(7, 8)
+                    value(1, 2, [int(1, 2)]),
+                    value(4, 5, [int(4, 5)]),
+                    value(7, 8, [int(7, 8)])
                 ])
             ]
         };

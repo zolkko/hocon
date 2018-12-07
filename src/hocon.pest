@@ -3,12 +3,12 @@ WHITESPACE = _{ " " | "\t" }
 
 // Comments does not consume newline character because in some cases they may be used
 // as separators between object fields and array elements.
-COMMENT    = _{ ("//" | "#") ~ (!NEWLINE ~ ANY)* ~ &(NEWLINE | EOI) }
+COMMENT    = _{ ("//" | "#") ~ (!(NEWLINE | EOI) ~ ANY)* ~ &(NEWLINE | EOI) }
 
 // Arrays' elements and object fields can be separated by enters or commas.
 // But a user can use multiple enters as a separator, or even surround a comma by multiple
 // newline characters (sequences).
-separator  = _{ (NEWLINE+ ~ ","? ~ NEWLINE*) | ("," ~ NEWLINE*) }
+separator  = _{ ("," ~ NEWLINE*) | (NEWLINE+ ~ ","? ~ NEWLINE*) }
 
 // Special symbols
 bool_true  = @{ ^"true" | ^"yes" | ^"y" | ^"t" }
@@ -32,9 +32,8 @@ required_include    = { ^"required(" ~ regular_include ~ ")" }
 include             = { ^"include" ~ NEWLINE* ~ (required_include | regular_include) }
 
 // Strings
-unquoted_string_end = _{ "//" | WHITESPACE | "$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "," | "+" | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" }
+unquoted_string_end = _{ "//" | NEWLINE | WHITESPACE | "$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "," | "+" | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" }
 unquoted_string     = @{ (!unquoted_string_end ~ ANY)+ }
-
 
 mstring = ${ "\"\"\"" ~ minner ~ "\"\"\"" }
 minner  = @{ (!("\"\"\"") ~ ANY)* }
@@ -59,27 +58,27 @@ value_chunk = _{
     (bool ~ &element_end) |
     (int ~ &element_end) |
     (float ~ &element_end) |
-    (mstring ~ value_chunk?) |
-    (string ~ value_chunk?) |
-    (array ~ value_chunk?) |
-    (object ~ value_chunk?) |
-    (substitution ~ value_chunk?) |
-    (unquoted_string ~ value_chunk?)
+    mstring |
+    string |
+    array |
+    object |
+    substitution |
+    unquoted_string
 }
-value = { value_chunk }
+value = { value_chunk ~ (!separator ~ value_chunk)* }
 
 array = { "[" ~ NEWLINE* ~ value ~ (separator ~ value)* ~ (separator)? ~ "]" | "[" ~ NEWLINE* ~ "]" }
 
 // Field name and paths.
 path_delimiter   = _{ "." }
-field_name       = @{ (("_" | ASCII_ALPHA) ~ (ASCII_ALPHANUMERIC | "_" | "-")*) }
+field_name       = @{ (!("\"" | ":" | "=" | "+=" | "{" | "}" | "[" | "]" | "," | "." | NEWLINE | "#" | "//") ~ ANY)+ }
 field_path       = { (string | field_name) ~ (path_delimiter ~ (string | field_name))* }
 
 field_assign     = @{ "=" | ":" }
 field_append     = @{ "+=" }
-field            = { field_path ~ (((field_assign | field_append) ~ value) | object) }
+field            = { field_path ~ NEWLINE* ~ (((field_assign | field_append) ~ NEWLINE* ~ value) | object) }
 
-field_or_include = _{ field | include }
+field_or_include = _{ include | field }
 object_body      = { field_or_include ~ (separator ~ field_or_include)* ~ separator? }
 object           = { "{" ~ NEWLINE* ~ object_body? ~ NEWLINE* ~ "}" }
 
