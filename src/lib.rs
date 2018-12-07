@@ -38,11 +38,19 @@ pub struct HoconParser {
 
 impl Default for HoconParser {
     fn default() -> Self {
-        HoconParser { include_handler: None }
+        HoconParser::new()
     }
 }
 
 impl HoconParser {
+
+    pub fn new() -> Self {
+        HoconParser { include_handler: None }
+    }
+
+    pub fn with_include_handler(handler: IncludeHandler) -> Self {
+        HoconParser { include_handler: Some(handler) }
+    }
 
     /// Parses a string slice into owned hocon object.
     /// Similar to JSON format, Hocon allows arrays and objects to be defined on the top level.
@@ -239,7 +247,8 @@ fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
                 return concatenate_object(object, input);
             }
             Rule::substitution => {
-                unimplemented!()
+//                unimplemented!()
+                Ok(Value::String("not yet implemented".to_owned()))
             }
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
@@ -379,7 +388,7 @@ fn extract_object_body(body: Pair<Rule>) -> Result<Object, HoconError<Rule>> {
                 }
             }
             Rule::include => {
-                unimplemented!()
+//                unimplemented!()
 //                if let Some(included_object) = self.process_include(pair) {
 //                    // TODO: merge included object into result
 //                }
@@ -448,17 +457,6 @@ mod tests {
 
     use pest::{parses_to, consumes_to};
     use super::*;
-
-    static AKKA_CONF: &'static str = include_str!("resources/akka.conf");
-
-    #[test]
-    fn test_akka() {
-        let pairs = HoconParser::parse(Rule::root, AKKA_CONF);
-
-        println!("{:#?}", pairs);
-        //assert!(false);
-    }
-
 
     #[test]
     fn test_extract_object() {
