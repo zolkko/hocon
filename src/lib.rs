@@ -10,7 +10,7 @@ use pest_derive::Parser;
 mod error;
 mod value;
 
-use self::value::{Array, Object, Value};
+use self::value::{Array, Object, Value, ObjectOps};
 use self::error::HoconError;
 
 
@@ -376,7 +376,8 @@ fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
                 return concatenate_array(array, input);
             }
             Rule::object => {
-                return concatenate_object(Object::default(), input);
+                let mut object = extract_object(pair)?.unwrap_or_else(|| Object::default());
+                return concatenate_object(object, input);
             }
             Rule::substitution => {
                 unimplemented!()
@@ -394,8 +395,14 @@ fn concatenate_object(mut result: Object, input: Pairs<Rule>) -> Result<Value, H
     for pair in input {
         let position = pair.as_span().start_pos().line_col();
         match pair.as_rule() {
-            Rule::object => {}
-            Rule::substitution => {}
+            Rule::object => {
+                if let Some(object) = extract_object(pair)? {
+                    merge_objects(&mut result, &object);
+                }
+            }
+            Rule::substitution => {
+                unimplemented!()
+            }
             _ => {
                 return Err((position, "cannot concatenate the value, expected an object").into());
             }
@@ -476,11 +483,144 @@ fn extract_array(array: Pair<Rule>) -> Result<Array, HoconError<Rule>> {
     Ok(result)
 }
 
+/// An object may have an empty body, in this case the function returns `None`.
+fn extract_object(object: Pair<Rule>) -> Result<Option<Object>, HoconError<Rule>> {
+    match object.into_inner().next() {
+        Some(body) => extract_object_body(body).map(|obj| Some(obj)),
+        None => Ok(None)
+    }
+}
+
+
+#[derive(Debug, PartialEq)]
+enum FieldOp {
+    Assign(Vec<String>, Value),
+    Append(Vec<String>, Value)
+}
+
+/// If an object has a body it must contain at least one field or include directive.
+fn extract_object_body(body: Pair<Rule>) -> Result<Object, HoconError<Rule>> {
+
+    let mut result = Object::default();
+
+    let content = body.into_inner();
+    for pair in content {
+        let position = pair.as_span().start_pos().line_col();
+        match pair.as_rule() {
+            Rule::field => {
+                match extract_field(pair)? {
+                    FieldOp::Assign(field_path, value) => {
+                        result.assign_value(&field_path[..], value);
+                    },
+                    FieldOp::Append(field_path, value) => {
+                        if let Err(error) = result.append_value(&field_path[..], value) {
+                            return Err((position, error).into());
+                        }
+                    }
+                }
+            }
+            Rule::include => {
+                unimplemented!()
+//                if let Some(included_object) = self.process_include(pair) {
+//                    // TODO: merge included object into result
+//                }
+            }
+            _ => unreachable!("object_body grammar rule does not correspond to extraction logic")
+        }
+    }
+
+    Ok(result)
+}
+
+fn extract_field(field: Pair<Rule>) -> Result<FieldOp, HoconError<Rule>> {
+
+    let position = field.as_span().start_pos().line_col();
+    let mut content = field.into_inner();
+
+    let path = if let Some(field_path) = content.next() {
+        let paths = field_path.into_inner();
+        let mut path = Vec::new();
+        for key in paths {
+            match key.as_rule() {
+                Rule::field_name => path.push(key.as_str().to_owned()),
+                Rule::string => path.push(extract_string(key)?),
+                _ => unreachable!()
+            }
+        }
+        path
+    } else {
+        return Err((position, "field grammar rule does not correspond to extraction logic").into());
+    };
+
+    if let Some(pair) = content.next() {
+        let position = pair.as_span().start_pos().line_col();
+        match pair.as_rule() {
+            Rule::field_append => {
+                if let Some(value_pair) = content.next() {
+                    concatenate_value(value_pair).map(|value| FieldOp::Append(path, value))
+                } else {
+                    Err((position, "field grammar rule does not correspond to extraction logic").into())
+                }
+            }
+            Rule::field_assign => {
+                if let Some(value_pair) = content.next() {
+                    concatenate_value(value_pair).map(|value| FieldOp::Assign(path, value))
+                } else {
+                    Err((position, "field grammar rule does not correspond to extraction logic").into())
+                }
+            }
+            Rule::object => {
+                if let Some(obj) = extract_object(pair)? {
+                    Ok(FieldOp::Assign(path, Value::Object(obj)))
+                } else {
+                    // TODO: assign nothing
+                    Ok(FieldOp::Assign(path, Value::Object(Object::default())))
+                }
+            }
+            _ => unreachable!()
+        }
+    } else {
+        Err((position, "field grammar rule does not correspond to extraction logic").into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use pest::{parses_to, consumes_to};
     use super::*;
+
+
+    #[test]
+    fn test_extract_object() {
+        let input = r#"{
+        field1 = 1
+        field3 {
+            sub_field1: 3, sub_field2: 4
+        }
+        field2: 2
+        field3.sub_field2: 5
+        field3.sub_field3 += 1
+        field3.sub_field3 += 2
+        field3.sub_field3 += 3
+        }"#;
+
+        let mut obj_pair = HoconParser::parse(Rule::object, input).unwrap().next().unwrap();
+
+        let obj = extract_object(obj_pair);
+        println!("{:#?}", obj);
+        assert!(false);
+    }
+
+
+    #[test]
+    fn test_extract_field() {
+        let mut field_pairs = HoconParser::parse(Rule::field, "path: value").expect("must parse");
+        let field_pair = field_pairs.next().expect("must parse the field");
+        let res = extract_field(field_pair).expect("must extract");
+
+        assert_eq!(res, FieldOp::Assign(vec!["path".to_owned()], Value::String("value".to_owned())));
+    }
 
     #[test]
     fn test_parse_array() {

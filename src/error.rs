@@ -5,6 +5,8 @@ use std::num::{ParseIntError, ParseFloatError};
 use pest::RuleType;
 use pest::error::{Error as PestError};
 
+use crate::value::AppendError;
+
 
 #[derive(Debug)]
 pub struct Position {
@@ -24,6 +26,7 @@ enum ErrorKind<R> where R: RuleType {
     PestError(PestError<R>),
     IntError(Position, ParseIntError),
     FloatError(Position, ParseFloatError),
+    AppendError(Position, AppendError)
 }
 
 #[derive(Debug)]
@@ -38,6 +41,7 @@ impl<R: RuleType> fmt::Display for HoconError<R> {
             ErrorKind::PestError(ref error) => write!(f, "{}", error),
             ErrorKind::IntError(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::FloatError(ref pos, ref error) => write!(f, "{} {}", pos, error),
+            ErrorKind::AppendError(ref pos, ref error) => write!(f, "{} {}", pos, error),
         }
     }
 }
@@ -69,5 +73,12 @@ impl<R: RuleType> From<((usize, usize), ParseFloatError)> for HoconError<R> {
     fn from(value: ((usize, usize), ParseFloatError)) -> Self {
         let ((line, column), error) = value;
         HoconError { kind: ErrorKind::FloatError( Position { line, column }, error) }
+    }
+}
+
+impl<R: RuleType> From<((usize, usize), AppendError)> for HoconError<R> {
+    fn from(value: ((usize, usize), AppendError)) -> Self {
+        let ((line, column), error) = value;
+        HoconError { kind: ErrorKind::AppendError( Position { line, column }, error) }
     }
 }

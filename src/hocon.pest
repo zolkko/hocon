@@ -43,11 +43,6 @@ sinner  = @{ (!("\"" | "\\") ~ ANY)* ~ (escape ~ sinner)? }
 escape  = @{ "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | unicode) }
 unicode = @{ "u" ~ ASCII_HEX_DIGIT{4} }
 
-// Field name and paths.
-path_delimiter = _{ "." }
-field_name     = @{ string | (("_" | ASCII_ALPHA) ~ (ASCII_ALPHANUMERIC | "_" | "-")*) }
-field_path     = { field_name ~ (path_delimiter ~ field_name)* }
-
 // Substitution can be either optional or required. Inside the brackets a variable's name expected.
 optional_subs_start   = _{ "${?" }
 required_subs_start   = _{ "${" }
@@ -74,6 +69,11 @@ value_chunk = _{
 value = { value_chunk }
 
 array = { "[" ~ NEWLINE* ~ value ~ (separator ~ value)* ~ (separator)? ~ "]" | "[" ~ NEWLINE* ~ "]" }
+
+// Field name and paths.
+path_delimiter   = _{ "." }
+field_name       = @{ (("_" | ASCII_ALPHA) ~ (ASCII_ALPHANUMERIC | "_" | "-")*) }
+field_path       = { (string | field_name) ~ (path_delimiter ~ (string | field_name))* }
 
 field_assign     = @{ "=" | ":" }
 field_append     = @{ "+=" }
