@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn test_assign_non_existing() {
+    fn assign_non_existing() {
         let mut obj = Object::default();
         obj.assign_value(&vec!["field".to_owned(), "subfield".to_owned()], Value::Integer(123));
 
@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn test_assign_override() {
+    fn assign_override() {
         let mut obj = object![
             "field" => Value::Object(object![
                 "subfield" => Value::Integer(123)
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_assign_change_types() {
+    fn assign_change_types() {
         let mut obj = object![
             "field" => Value::Object(object![
                 "subfield" => Value::Integer(123)
@@ -208,5 +208,37 @@ mod tests {
         ];
 
         assert_eq!(obj, expected);
+    }
+
+    #[test]
+    fn merge_object() {
+        let mut to_obj = object![
+            "field1" => Value::Object(object![
+                "subfield1" => Value::Integer(1)
+            ])
+        ];
+
+        let from_obj = object![
+            "field1" => Value::Object(object![
+                "subfield2" => Value::Integer(2)
+            ]),
+            "field2" => Value::Object(object![
+                "subfield3" => Value::Integer(3)
+            ])
+        ];
+
+        let expected = object![
+            "field1" => Value::Object(object![
+                "subfield1" => Value::Integer(1),
+                "subfield2" => Value::Integer(2)
+            ]),
+            "field2" => Value::Object(object![
+                "subfield3" => Value::Integer(3)
+            ])
+        ];
+
+        to_obj.merge_object(&from_obj);
+
+        assert_eq!(to_obj, expected);
     }
 }
