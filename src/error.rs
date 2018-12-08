@@ -53,11 +53,9 @@ impl<R: RuleType> fmt::Display for HoconError<R> {
 impl<R: RuleType> Error for HoconError<R> { }
 
 impl<R: RuleType> de::Error for HoconError<R> {
-
     fn custom<T: fmt::Display>(msg: T) -> Self {
         HoconError { kind: ErrorKind::Message(msg.to_string()) }
     }
-
 }
 
 impl<R: RuleType> From<PestError<R>> for HoconError<R> {
@@ -66,7 +64,6 @@ impl<R: RuleType> From<PestError<R>> for HoconError<R> {
     }
 }
 
-/// Converts position and error description into Hocon error
 impl<R: RuleType> From<((usize, usize), &'static str)> for HoconError<R> {
     fn from(value: ((usize, usize), &'static str)) -> Self {
         let ((line, column), description) = value;

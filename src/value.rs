@@ -2,6 +2,7 @@ use std::fmt;
 use std::error::Error;
 use std::collections::HashMap;
 
+/// Represents any valid HOCON value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -11,6 +12,11 @@ pub enum Value {
     String(String),
     Array(Array),
     Object(Object),
+}
+
+/// The default value is `Value::Null`.
+impl Default for Value {
+    fn default() -> Self { Value::Null }
 }
 
 /// Owned hocon array.
