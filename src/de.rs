@@ -125,10 +125,18 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_bool<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Bool(v) => visitor.visit_bool(v),
+            Value::Integer(v) => {
+                if v == 0 {
+                    visitor.visit_bool(false)
+                } else {
+                    visitor.visit_bool(true)
+                }
+            },
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
 
     fn deserialize_i8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -327,6 +335,26 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn value_bool() {
+        let v: bool = from_value(Value::Bool(true))
+            .expect("must deserialize hocon::Value::Bool into bool");
+        assert_eq!(v, true);
+
+        let v: bool = from_value(Value::Integer(1))
+            .expect("must deserialize hocon::Value::Integer into bool");
+        assert_eq!(v, true);
+
+        let v: bool = from_value(Value::Integer(0))
+            .expect("must deserialize hocon::Value::Integer into bool");
+        assert_eq!(v, false);
+    }
+
+    #[test]
+    fn value_bool_failure() {
+        let v: Result<bool, _> = from_value(Value::String("test".to_owned()));
+        assert!(v.is_err(), "must not convert string into bool");
+    }
 
     #[test]
     fn value_string() {
