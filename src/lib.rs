@@ -9,6 +9,7 @@ use pest_derive::Parser;
 
 mod error;
 mod value;
+mod de;
 
 use self::value::{Array, Object, Value, ObjectOps};
 use self::error::HoconError;
@@ -239,11 +240,11 @@ fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
                 return concatenate_str(result, None, input, value_chunks.as_str(), span.start());
             }
             Rule::array => {
-                let mut array = extract_array(pair)?;
+                let array = extract_array(pair)?;
                 return concatenate_array(array, input);
             }
             Rule::object => {
-                let mut object = extract_object(pair)?.unwrap_or_else(|| Object::default());
+                let object = extract_object(pair)?.unwrap_or_else(|| Object::default());
                 return concatenate_object(object, input);
             }
             Rule::substitution => {

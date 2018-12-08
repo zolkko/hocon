@@ -5,6 +5,8 @@ use std::num::{ParseIntError, ParseFloatError};
 use pest::RuleType;
 use pest::error::{Error as PestError};
 
+use serde::de;
+
 use crate::value::AppendError;
 
 
@@ -22,6 +24,7 @@ impl fmt::Display for Position {
 
 #[derive(Debug)]
 enum ErrorKind<R> where R: RuleType {
+    Message(String),
     Grammar(Position, &'static str),
     PestError(PestError<R>),
     IntError(Position, ParseIntError),
@@ -37,6 +40,7 @@ pub struct HoconError<R> where R: RuleType {
 impl<R: RuleType> fmt::Display for HoconError<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.kind {
+            ErrorKind::Message(ref msg) => f.write_str(msg),
             ErrorKind::Grammar(ref pos, ref descr) => write!(f, "{} {}", pos, descr),
             ErrorKind::PestError(ref error) => write!(f, "{}", error),
             ErrorKind::IntError(ref pos, ref error) => write!(f, "{} {}", pos, error),
@@ -47,6 +51,14 @@ impl<R: RuleType> fmt::Display for HoconError<R> {
 }
 
 impl<R: RuleType> Error for HoconError<R> { }
+
+impl<R: RuleType> de::Error for HoconError<R> {
+
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        HoconError { kind: ErrorKind::Message(msg.to_string()) }
+    }
+
+}
 
 impl<R: RuleType> From<PestError<R>> for HoconError<R> {
     fn from(error: PestError<R>) -> Self {
