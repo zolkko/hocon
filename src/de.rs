@@ -109,8 +109,8 @@ impl<'de> de::Deserializer<'de> for Value {
             },
             Value::Float(v) => visitor.visit_f64(v),
             Value::String(v) => visitor.visit_string(v),
-            Value::Array(v) => unimplemented!(),
-            Value::Object(v) => unimplemented!(),
+            Value::Array(v) => visit_array(v, visitor),
+            Value::Object(v) => visit_object(v, visitor),
         }
     }
 
@@ -241,10 +241,8 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_unit_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_unit_struct<V: de::Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_unit(visitor)
     }
 
     fn deserialize_newtype_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
@@ -263,13 +261,11 @@ impl<'de> de::Deserializer<'de> for Value {
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
         where V: de::Visitor<'de>
     {
-        unimplemented!()
+        self.deserialize_seq(visitor)
     }
 
-    fn deserialize_tuple_struct<V>(self, name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_tuple_struct<V: de::Visitor<'de>>(self, name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_tuple(len, visitor)
     }
 
     fn deserialize_map<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -686,5 +682,57 @@ mod tests {
             map
         };
         assert_eq!(v, expected);
+    }
+
+    #[test]
+    fn value_optional() {
+        let v: Option<i32> = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into optional i32");
+        assert_eq!(v, Some(123));
+
+        let v: Option<i32> = from_value(Value::Null).expect("must deserialize hocon::Value::Integer into optional i32");
+        assert_eq!(v, None);
+    }
+
+    #[test]
+    fn value_unit() {
+        let v: () = from_value(Value::Null).expect("must deserialize hocon::Value::Null into unit");
+        assert_eq!(v, ());
+    }
+
+    #[test]
+    fn value_tuple() {
+        let v: (i32, i32) = from_value(Value::Array(vec![Value::Integer(1), Value::Integer(2)])).expect("must deserialize hocon::Value::Array into tuple of i32");
+        assert_eq!(v, (1, 2));
+
+        let v: Result<(i32, i32), _> = from_value(Value::Array(vec![Value::Integer(1)]));
+        assert!(v.is_err(), "expected a tuple of size 2");
+
+        let v: Result<(i32, i32), _> = from_value(Value::Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+        assert!(v.is_err(), "expected a tuple of size 2");
+
+        let v: Result<(i32, i32), _> = from_value(Value::Null);
+        assert!(v.is_err(), "expected an array");
+    }
+
+    #[test]
+    fn value_tuple_struct() {
+        use serde_derive::Deserialize;
+
+        #[derive(Deserialize, Debug, PartialEq)]
+        pub struct TupleStruct(pub i32, pub i32);
+
+        let v: TupleStruct = from_value(Value::Array(vec![Value::Integer(1), Value::Integer(2)])).expect("must deserialize hocon::Value::Array into tuple of i32");
+        assert_eq!(v, TupleStruct(1, 2));
+    }
+
+    #[test]
+    fn value_unit_struct() {
+        use serde_derive::Deserialize;
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        pub struct UnitStruct;
+
+        let v: UnitStruct = from_value(Value::Null).expect("must deserialize hocon::Value::Null into unit struct");
+        assert_eq!(v, UnitStruct);
     }
 }
