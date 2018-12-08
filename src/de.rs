@@ -167,26 +167,32 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_u8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Integer(v) if v <= std::u8::MAX as isize && v >= std::u8::MIN as isize => visitor.visit_u8(v as u8),
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
 
-    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_u16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Integer(v) if v <= std::u16::MAX as isize && v >= std::u16::MIN as isize => visitor.visit_u16(v as u16),
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
 
-    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de> {
-        unimplemented!()
+    fn deserialize_u32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Integer(v) if v <= std::u32::MAX as isize && v >= std::u32::MIN as isize => visitor.visit_u32(v as u32),
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
 
-    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de> {
-        unimplemented!()
+    fn deserialize_u64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Integer(v) if v >= std::u64::MIN as isize => visitor.visit_u32(v as u32),
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
 
     fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -337,36 +343,26 @@ mod tests {
 
     #[test]
     fn value_bool() {
-        let v: bool = from_value(Value::Bool(true))
-            .expect("must deserialize hocon::Value::Bool into bool");
+        let v: bool = from_value(Value::Bool(true)).expect("must deserialize hocon::Value::Bool into bool");
         assert_eq!(v, true);
 
-        let v: bool = from_value(Value::Integer(1))
-            .expect("must deserialize hocon::Value::Integer into bool");
+        let v: bool = from_value(Value::Integer(1)).expect("must deserialize hocon::Value::Integer into bool");
         assert_eq!(v, true);
 
-        let v: bool = from_value(Value::Integer(0))
-            .expect("must deserialize hocon::Value::Integer into bool");
+        let v: bool = from_value(Value::Integer(0)).expect("must deserialize hocon::Value::Integer into bool");
         assert_eq!(v, false);
-    }
 
-    #[test]
-    fn value_bool_failure() {
         let v: Result<bool, _> = from_value(Value::String("test".to_owned()));
         assert!(v.is_err(), "must not convert string into bool");
     }
 
     #[test]
     fn value_string() {
-        let s: String = from_value(Value::String("string value".to_owned()))
-            .expect("must deserialize hocon::Value::String into String");
+        let s: String = from_value(Value::String("string value".to_owned())).expect("must deserialize hocon::Value::String into String");
         assert_eq!("string value", s);
-    }
 
-    #[test]
-    fn value_string_failure() {
         let v: Result<String, _> = from_value(Value::Integer(123));
-        assert!(v.is_err(), "must not convert isize to string");
+        assert!(v.is_err(), "must not convert hocon::Value::Integer to string");
     }
 
     #[test]
@@ -374,94 +370,119 @@ mod tests {
         let s: char = from_value(Value::String("S".to_owned()))
             .expect("must deserialize hocon::Value::String into char");
         assert_eq!('S', s);
-    }
 
-    #[test]
-    fn value_char_failure() {
         let v: Result<char, _> = from_value(Value::Integer(123));
         assert!(v.is_err(), "must not convert isize to char");
     }
 
     #[test]
-    fn value_isize() {
-        let v: isize = from_value(Value::Integer(123))
-            .expect("must deserialize hocon::Value::Integer into isize");
-        assert_eq!(v, 123);
-    }
+    fn value_i8() {
+        let v: i8 = from_value(Value::Integer(12)).expect("must deserialize hocon::Value::Integer into i8");
+        assert_eq!(v, 12);
 
-    #[test]
-    fn value_isize_failure() {
-        let v: Result<isize, _> = from_value(Value::Null);
-        assert!(v.is_err(), "must not convert null to isize");
-    }
+        let v: Result<i8, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null to i8");
 
-    #[test]
-    fn value_i64() {
-        let v: i64 = from_value(Value::Integer(123))
-            .expect("must deserialize hocon::Value::Integer into i64");
-        assert_eq!(v, 123);
-    }
+        let v: Result<i8, _> = from_value(Value::Integer(std::i8::MAX as isize + 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into i8 if the value is too big");
 
-    #[test]
-    fn value_i64_failure() {
-        let v: Result<i64, _> = from_value(Value::Null);
-        assert!(v.is_err(), "must not convert null to i64");
-    }
-
-    #[test]
-    fn value_i32() {
-        let v: i32 = from_value(Value::Integer(123))
-            .expect("must deserialize hocon::Value::Integer into i32");
-        assert_eq!(v, 123);
-    }
-
-    #[test]
-    fn value_i32_failure() {
-        let v: Result<i32, _> = from_value(Value::Null);
-        assert!(v.is_err(), "must not convert null to i32");
-
-        let v: Result<i32, _> = from_value(Value::Integer(std::i32::MAX as isize + 1));
-        assert!(v.is_err(), "must not convert hocon::Value::Integer into i32 if it is too big");
-
-        let v: Result<i32, _> = from_value(Value::Integer(std::i32::MIN as isize - 1));
-        assert!(v.is_err(), "must not convert hocon::Value::Integer into i32 if it is too small");
+        let v: Result<i8, _> = from_value(Value::Integer(std::i8::MIN as isize - 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into i8 if the value is too small");
     }
 
     #[test]
     fn value_i16() {
-        let v: i16 = from_value(Value::Integer(12))
-            .expect("must deserialize hocon::Value::Integer into i16");
+        let v: i16 = from_value(Value::Integer(12)).expect("must deserialize hocon::Value::Integer into i16");
         assert_eq!(v, 12);
-    }
 
-    #[test]
-    fn value_i16_failure() {
         let v: Result<i16, _> = from_value(Value::Null);
-        assert!(v.is_err(), "must not convert null to i16");
+        assert!(v.is_err(), "must not convert hocon::Value::Null to i16");
 
         let v: Result<i16, _> = from_value(Value::Integer(std::i16::MAX as isize + 1));
-        assert!(v.is_err(), "must not convert hocon::Value::Integer into i16 if it is too big");
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into i16 if the value is too big");
 
         let v: Result<i16, _> = from_value(Value::Integer(std::i16::MIN as isize - 1));
-        assert!(v.is_err(), "must not convert hocon::Value::Integer into i16 if it is too small");
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into i16 if the value is too small");
     }
 
     #[test]
-    fn value_i8() {
-        let v: i8 = from_value(Value::Integer(12))
-            .expect("must deserialize hocon::Value::Integer into i16");
-        assert_eq!(v, 12);
+    fn value_i32() {
+        let v: i32 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into i32");
+        assert_eq!(v, 123);
+
+        let v: Result<i32, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Integer to i32");
+
+        let v: Result<i32, _> = from_value(Value::Integer(std::i32::MAX as isize + 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into i32 if the value is too big");
+
+        let v: Result<i32, _> = from_value(Value::Integer(std::i32::MIN as isize - 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into i32 if the value is too small");
     }
 
     #[test]
-    fn value_i8_failure() {
-        let v: Result<i8, _> = from_value(Value::Null);
-        assert!(v.is_err(), "must not convert null to i8");
+    fn value_i64() {
+        let v: i64 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into i64");
+        assert_eq!(v, 123);
 
-        let v: Result<i8, _> = from_value(Value::Integer(std::i8::MAX as isize + 1));
-        assert!(v.is_err(), "must not convert hocon::Value::Integer into i8 if it is too big");
+        let v: Result<i64, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null to i64");
+    }
 
-        let v: Result<i8, _> = from_value(Value::Integer(std::i8::MIN as isize - 1));
-        assert!(v.is_err(), "must not convert hocon::Value::Integer into i8 if it is too small");
+    #[test]
+    fn value_u8() {
+        let v: u8 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into u8");
+        assert_eq!(v, 123);
+
+        let v: Result<u8, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null into u8");
+
+        let v: Result<u8, _> = from_value(Value::Integer(std::u8::MAX as isize + 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u8 if the value is too big");
+
+        let v: Result<u8, _> = from_value(Value::Integer(std::u8::MIN as isize - 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u8 if the value is too small");
+    }
+
+    #[test]
+    fn value_u16() {
+        let v: u16 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into u16");
+        assert_eq!(v, 123);
+
+        let v: Result<u16, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null into u16");
+
+        let v: Result<u16, _> = from_value(Value::Integer(std::u16::MAX as isize + 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u16 if the value is too big");
+
+        let v: Result<u16, _> = from_value(Value::Integer(std::u16::MIN as isize - 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u16 if the value is too small");
+    }
+
+    #[test]
+    fn value_u32() {
+        let v: u32 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into u32");
+        assert_eq!(v, 123);
+
+        let v: Result<u32, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null into u32");
+
+        let v: Result<u32, _> = from_value(Value::Integer(std::u32::MAX as isize + 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u32 if the value is too big");
+
+        let v: Result<u32, _> = from_value(Value::Integer(std::u32::MIN as isize - 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u32 if the value is too small");
+    }
+
+    #[test]
+    fn value_u64() {
+        let v: u64 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into u64");
+        assert_eq!(v, 123);
+
+        let v: Result<u64, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null into u32");
+
+        let v: Result<u64, _> = from_value(Value::Integer(std::u64::MIN as isize - 1));
+        assert!(v.is_err(), "must not convert hocon::Value::Integer into u64 if the value is too small");
     }
 }
