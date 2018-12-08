@@ -245,9 +245,7 @@ impl<'de> de::Deserializer<'de> for Value {
         self.deserialize_unit(visitor)
     }
 
-    fn deserialize_newtype_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
+    fn deserialize_newtype_struct<V: de::Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
         unimplemented!()
     }
 
@@ -258,13 +256,11 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
+    fn deserialize_tuple<V: de::Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
         self.deserialize_seq(visitor)
     }
 
-    fn deserialize_tuple_struct<V: de::Visitor<'de>>(self, name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+    fn deserialize_tuple_struct<V: de::Visitor<'de>>(self, _name: &'static str, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
         self.deserialize_tuple(len, visitor)
     }
 
@@ -275,16 +271,16 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_struct<V>(self, name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_struct<V: de::Visitor<'de>>(self, _name: &'static str, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Array(v) => visit_array(v, visitor),
+            Value::Object(v) => visit_object(v, visitor),
+            _ => Err(self.invalid_type(&visitor)),
+        }
     }
 
-    fn deserialize_enum<V>(self, name: &'static str, variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_enum<V: de::Visitor<'de>>(self, name: &'static str, variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        visit_enum(self, visitor)
     }
 
     fn deserialize_identifier<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -475,6 +471,94 @@ impl<'de> de::Deserializer<'de> for ObjectDeserializer {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
         byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
         map struct enum identifier
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+fn visit_enum<'de, V: de::Visitor<'de>>(v: Value, visitor: V) -> Result<V::Value, HoconError<Rule>> {
+    let (variant, value) = match v {
+        Value::Object(value) => {
+            let mut iter = value.into_iter();
+            let (variant, value) = match iter.next() {
+                Some(v) => v,
+                None => {
+                    return Err(HoconError::message("map with a single key"));
+                }
+            };
+
+            if iter.next().is_some() {
+                return Err(HoconError::message("map with a single key"));
+            }
+
+            (Value::String(variant), Some(value))
+        }
+        Value::String(variant) => (Value::String(variant), None),
+        other => {
+            return Err(HoconError::message("string or map"));
+        }
+    };
+
+    visitor.visit_enum(EnumDeserializer { variant, value })
+}
+
+struct EnumDeserializer {
+    variant: Value,
+    value: Option<Value>,
+}
+
+impl<'de> de::EnumAccess<'de> for EnumDeserializer {
+
+    type Error = HoconError<Rule>;
+
+    type Variant = VariantDeserializer;
+
+    fn variant_seed<V: de::DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, VariantDeserializer), Self::Error> {
+        let visitor = VariantDeserializer { value: self.value };
+        seed.deserialize(self.variant).map(|v| (v, visitor))
+    }
+}
+
+struct VariantDeserializer {
+    value: Option<Value>,
+}
+
+impl<'de> de::VariantAccess<'de> for VariantDeserializer {
+
+    type Error = HoconError<Rule>;
+
+    fn unit_variant(self) -> Result<(), Self::Error> {
+        match self.value {
+            Some(value) => de::Deserialize::deserialize(value),
+            None => Ok(()),
+        }
+    }
+
+    fn newtype_variant_seed<T: de::DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Self::Error> {
+        match self.value {
+            Some(value) => seed.deserialize(value),
+            None => Err(HoconError::message("newtype variant")),
+        }
+    }
+
+    fn tuple_variant<V: de::Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+        match self.value {
+            Some(Value::Array(v)) => {
+                de::Deserializer::deserialize_any(ArrayDeserializer::new(v), visitor)
+            }
+            Some(other) => Err(HoconError::message("tuple variant")),
+            None => Err(HoconError::message("tuple variant")),
+        }
+    }
+
+    fn struct_variant<V: de::Visitor<'de>>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+        match self.value {
+            Some(Value::Object(v)) => {
+                de::Deserializer::deserialize_any(ObjectDeserializer::new(v), visitor)
+            }
+            Some(other) => Err(HoconError::message("struct variant")),
+            _ => Err(HoconError::message("struct variant")),
+        }
     }
 }
 
@@ -734,5 +818,99 @@ mod tests {
 
         let v: UnitStruct = from_value(Value::Null).expect("must deserialize hocon::Value::Null into unit struct");
         assert_eq!(v, UnitStruct);
+    }
+
+    #[test]
+    fn value_struct() {
+        use serde_derive::Deserialize;
+
+        #[derive(Deserialize, Debug, PartialEq)]
+        pub struct TestStruct {
+            pub field1: i32,
+            pub field2: String
+        }
+
+        let v: TestStruct = from_value(Value::Object({
+            let mut obj = Object::default();
+            obj.insert("field1".to_owned(), Value::Integer(1));
+            obj.insert("field2".to_owned(), Value::String("2".to_owned()));
+            obj
+        })).expect("must deserialize hocon::Value::Object into TestStruct");
+        assert_eq!(v, TestStruct { field1: 1, field2: "2".to_owned() });
+
+        let v: TestStruct = from_value(Value::Array(vec![
+            Value::Integer(1),
+            Value::String("2".to_owned())
+        ])).expect("must deserialize hocon::Value::Object into TestStruct");
+        assert_eq!(v, TestStruct { field1: 1, field2: "2".to_owned() });
+
+        let v: Result<TestStruct, _> = from_value(Value::Object({
+            let mut obj = Object::default();
+            obj.insert("field2".to_owned(), Value::String("2".to_owned()));
+            obj
+        }));
+        assert!(v.is_err(), "missing field field1");
+
+        let v: Result<TestStruct, _> = from_value(Value::Array(vec![
+            Value::Integer(1),
+        ]));
+        assert!(v.is_err(), "not enough elements in the array");
+    }
+
+    #[test]
+    fn value_enum() {
+        use serde_derive::Deserialize;
+
+        #[derive(Deserialize, Debug, PartialEq)]
+        pub enum TestUnit {
+            One,
+            Two
+        }
+
+        let v: TestUnit = from_value(Value::String("One".to_string())).expect("must deserialize hocon::Value::String into enum");
+        assert_eq!(v, TestUnit::One);
+
+        let v: TestUnit = from_value(Value::String("Two".to_string())).expect("must deserialize hocon::Value::String into enum");
+        assert_eq!(v, TestUnit::Two);
+
+        #[derive(Deserialize, Debug, PartialEq)]
+        pub enum TestStruct {
+            One {
+                field1: i32,
+                field2: String
+            },
+            Two {
+                field1: String,
+                field2: i32
+            }
+        }
+
+        let v: TestStruct = from_value(Value::Object({
+            let mut fields = Object::default();
+            fields.insert("field1".to_owned(), Value::Integer(1));
+            fields.insert("field2".to_owned(), Value::String("2".to_owned()));
+
+            let mut obj = Object::default();
+            obj.insert("One".to_owned(), Value::Object(fields));
+            obj
+        })).expect("must deserialize hocon::Value::String into enum");
+        assert_eq!(v, TestStruct::One {
+            field1: 1,
+            field2: "2".to_owned()
+        });
+
+        let v: TestStruct = from_value(Value::Object({
+            let mut fields = Object::default();
+            fields.insert("field1".to_owned(), Value::String("1".to_owned()));
+            fields.insert("field2".to_owned(), Value::Integer(2));
+
+            let mut obj = Object::default();
+            obj.insert("Two".to_owned(), Value::Object(fields));
+            obj
+        })).expect("must deserialize hocon::Value::String into enum");
+        assert_eq!(v, TestStruct::Two {
+            field1: "1".to_owned(),
+            field2: 2
+        });
     }
 }
