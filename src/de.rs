@@ -1,18 +1,6 @@
 use std::fmt;
-
 use serde::de;
-
 use super::*;
-
-
-/*
-/// ```rust
-/// # use hocon::Value;
-/// let val = Value::String("foo".to_owned());
-/// let s: String = hocon::from_value(val).unwrap();
-/// assert_eq!("foo", s);
-/// ```
-*/
 
 
 /// Interpret a `hocon::Value` as an instance of type `T`.
@@ -27,8 +15,6 @@ use super::*;
 pub fn from_value<T: de::DeserializeOwned>(value: Value) -> Result<T, HoconError<Rule>> {
     de::Deserialize::deserialize(value)
 }
-
-////////////////////////////////////////////////////////////////////////////////
 
 struct ValueVisitor;
 
@@ -112,7 +98,7 @@ impl<'de> de::Deserializer<'de> for Value {
             Value::Null => visitor.visit_unit(),
             Value::Bool(v) => visitor.visit_bool(v),
             Value::Integer(v) => {
-                if v < 0 {
+                if v < std::u64::MIN as isize {
                     visitor.visit_i64(v as i64)
                 } else {
                     visitor.visit_u64(v as u64)
@@ -195,17 +181,21 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de> {
-        unimplemented!()
+    fn deserialize_f32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Float(v) => visitor.visit_f32(v as f32),
+            Value::Integer(v) => visitor.visit_f32(v as f32),
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
 
-    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de> {
-        unimplemented!()
+    fn deserialize_f64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Float(v) => visitor.visit_f64(v),
+            Value::Integer(v) => visitor.visit_f64(v as f64),
+            _ => Err(self.invalid_type(&visitor))
+        }
     }
-
-
 
     fn deserialize_char<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         self.deserialize_string(visitor)
@@ -221,9 +211,6 @@ impl<'de> de::Deserializer<'de> for Value {
             _ => Err(self.invalid_type(&visitor))
         }
     }
-
-
-
 
     fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
         where V: de::Visitor<'de>
@@ -367,12 +354,11 @@ mod tests {
 
     #[test]
     fn value_char() {
-        let s: char = from_value(Value::String("S".to_owned()))
-            .expect("must deserialize hocon::Value::String into char");
+        let s: char = from_value(Value::String("S".to_owned())).expect("must deserialize hocon::Value::String into char");
         assert_eq!('S', s);
 
         let v: Result<char, _> = from_value(Value::Integer(123));
-        assert!(v.is_err(), "must not convert isize to char");
+        assert!(v.is_err(), "must not convert hocon::Value::Integer to char");
     }
 
     #[test]
@@ -484,5 +470,29 @@ mod tests {
 
         let v: Result<u64, _> = from_value(Value::Integer(std::u64::MIN as isize - 1));
         assert!(v.is_err(), "must not convert hocon::Value::Integer into u64 if the value is too small");
+    }
+
+    #[test]
+    fn value_f32() {
+        let v: f32 = from_value(Value::Float(123.0)).expect("must deserialize hocon::Value::Float into f32");
+        assert_eq!(v, 123.0);
+
+        let v: f32 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into f32");
+        assert_eq!(v, 123.0);
+
+        let v: Result<f32, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null into f32");
+    }
+
+    #[test]
+    fn value_f64() {
+        let v: f64 = from_value(Value::Float(123.0)).expect("must deserialize hocon::Value::Float into f64");
+        assert_eq!(v, 123.0);
+
+        let v: f64 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into f64");
+        assert_eq!(v, 123.0);
+
+        let v: Result<f64, _> = from_value(Value::Null);
+        assert!(v.is_err(), "must not convert hocon::Value::Null into f64");
     }
 }
