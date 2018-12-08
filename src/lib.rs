@@ -467,7 +467,7 @@ mod tests {
         field2 = akka.actor.mailbox.bounded-queue-based
       }"#;
 
-        let mut obj_pair = HoconParser::parse(Rule::root, input).unwrap().next().unwrap();
+        let obj_pair = HoconParser::parse(Rule::root, input).unwrap().next().unwrap();
 
         let obj = extract_object(obj_pair);
         println!("{:#?}", obj);
@@ -505,7 +505,6 @@ mod tests {
         let mut array_pair = HoconParser::parse(Rule::array, r#"[1, foo   bar ": hello all "  quo "ted", 3]"#)
             .expect("must parse the array");
 
-        let mut array = Array::default();
         let array = extract_array(array_pair.next().unwrap())
             .expect("must extract an array");
 
