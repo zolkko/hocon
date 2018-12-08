@@ -58,7 +58,7 @@ impl HoconParser {
     pub fn parse_str(&self, input: &str) -> Result<Value, HoconError<Rule>> {
         let mut parsed = HoconParser::parse(Rule::root, input)?;
 
-        let mut root_pair = parsed.next().unwrap();
+        let root_pair = parsed.next().unwrap();
         let mut pairs = root_pair.into_inner();
         let pair = pairs.next().unwrap();
 
@@ -82,7 +82,7 @@ impl HoconParser {
     fn parse_include_root(&self, input: &str) -> Result<Object, HoconError<Rule>> {
         let mut parsed = HoconParser::parse(Rule::root, input)?;
 
-        let mut root_pair = parsed.next().unwrap();
+        let root_pair = parsed.next().unwrap();
         let mut pairs = root_pair.into_inner();
         let pair = pairs.next().unwrap();
 
@@ -236,7 +236,7 @@ fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
             }
             Rule::string | Rule::mstring => {
                 let span = pair.as_span();
-                let mut result = extract_string(pair)?.to_owned();
+                let result = extract_string(pair)?.to_owned();
                 return concatenate_str(result, None, input, value_chunks.as_str(), span.start());
             }
             Rule::array => {

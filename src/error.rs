@@ -37,6 +37,12 @@ pub struct HoconError<R> where R: RuleType {
     kind: ErrorKind<R>
 }
 
+impl<R: RuleType> HoconError<R> {
+    pub fn message(s: &str) -> Self {
+        HoconError { kind: ErrorKind::Message(s.to_owned()) }
+    }
+}
+
 impl<R: RuleType> fmt::Display for HoconError<R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.kind {

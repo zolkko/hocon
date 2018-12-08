@@ -1,5 +1,8 @@
 use std::fmt;
+
 use serde::de;
+use serde::forward_to_deserialize_any;
+
 use super::*;
 
 
@@ -128,56 +131,56 @@ impl<'de> de::Deserializer<'de> for Value {
     fn deserialize_i8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v <= std::i8::MAX as isize && v >= std::i8::MIN as isize => visitor.visit_i8(v as i8),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_i16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v <= std::i16::MAX as isize && v >= std::i16::MIN as isize => visitor.visit_i16(v as i16),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_i32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v <= std::i32::MAX as isize && v >= std::i32::MIN as isize => visitor.visit_i32(v as i32),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_i64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) => visitor.visit_i64(v as i64),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v <= std::u8::MAX as isize && v >= std::u8::MIN as isize => visitor.visit_u8(v as u8),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v <= std::u16::MAX as isize && v >= std::u16::MIN as isize => visitor.visit_u16(v as u16),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v <= std::u32::MAX as isize && v >= std::u32::MIN as isize => visitor.visit_u32(v as u32),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Integer(v) if v >= std::u64::MIN as isize => visitor.visit_u32(v as u32),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
@@ -185,7 +188,7 @@ impl<'de> de::Deserializer<'de> for Value {
         match self {
             Value::Float(v) => visitor.visit_f32(v as f32),
             Value::Integer(v) => visitor.visit_f32(v as f32),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
@@ -193,7 +196,7 @@ impl<'de> de::Deserializer<'de> for Value {
         match self {
             Value::Float(v) => visitor.visit_f64(v),
             Value::Integer(v) => visitor.visit_f64(v as f64),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
@@ -208,32 +211,34 @@ impl<'de> de::Deserializer<'de> for Value {
     fn deserialize_string<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::String(s) => visitor.visit_string(s),
-            _ => Err(self.invalid_type(&visitor))
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
-    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_bytes<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_byte_buf(visitor)
     }
 
-    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_byte_buf<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::String(v) => visitor.visit_string(v),
+            Value::Array(v) => visit_array(v, visitor),
+            _ => Err(self.invalid_type(&visitor)),
+        }
     }
 
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_option<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Null => visitor.visit_none(),
+            _ => visitor.visit_some(self),
+        }
     }
 
-    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_unit<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Null => visitor.visit_unit(),
+            _ => Err(self.invalid_type(&visitor)),
+        }
     }
 
     fn deserialize_unit_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error>
@@ -248,10 +253,11 @@ impl<'de> de::Deserializer<'de> for Value {
         unimplemented!()
     }
 
-    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_seq<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Array(v) => visit_array(v, visitor),
+            _ => Err(self.invalid_type(&visitor)),
+        }
     }
 
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
@@ -266,10 +272,11 @@ impl<'de> de::Deserializer<'de> for Value {
         unimplemented!()
     }
 
-    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_map<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self {
+            Value::Object(o) => visit_object(o, visitor),
+            _ => Err(self.invalid_type(&visitor)),
+        }
     }
 
     fn deserialize_struct<V>(self, name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error>
@@ -284,16 +291,13 @@ impl<'de> de::Deserializer<'de> for Value {
         unimplemented!()
     }
 
-    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_identifier<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        self.deserialize_string(visitor)
     }
 
-    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: de::Visitor<'de>
-    {
-        unimplemented!()
+    fn deserialize_ignored_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        drop(self);
+        visitor.visit_unit()
     }
 }
 
@@ -322,6 +326,163 @@ impl Value {
         }
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+
+fn visit_array<'de, V: de::Visitor<'de>>(array: Array, visitor: V) -> Result<V::Value, HoconError<Rule>> {
+    let len = array.len();
+    let mut deserializer = ArrayDeserializer::new(array);
+    let seq = visitor.visit_seq(&mut deserializer)?;
+    let remaining = deserializer.iter.len();
+    if remaining == 0 {
+        Ok(seq)
+    } else {
+        // TODO (zolkko): dedicated length error
+        Err(HoconError::message("fewer elements in array"))
+    }
+}
+
+struct ArrayDeserializer {
+    iter: std::vec::IntoIter<Value>,
+}
+
+impl ArrayDeserializer {
+    fn new(array: Array) -> Self {
+        ArrayDeserializer { iter: array.into_iter() }
+    }
+}
+
+impl<'de> de::Deserializer<'de> for ArrayDeserializer {
+
+    type Error = HoconError<Rule>;
+
+    #[inline]
+    fn deserialize_any<V: de::Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
+        let len = self.iter.len();
+        if len == 0 {
+            visitor.visit_unit()
+        } else {
+            let ret = visitor.visit_seq(&mut self)?;
+            let remaining = self.iter.len();
+            if remaining == 0 {
+                Ok(ret)
+            } else {
+                // TODO (zolkko): dedicated length error
+                Err(HoconError::message("fewer elements in array"))
+            }
+        }
+    }
+
+    fn deserialize_ignored_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        drop(self);
+        visitor.visit_unit()
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
+        byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
+        map struct enum identifier
+    }
+}
+
+impl<'de> de::SeqAccess<'de> for ArrayDeserializer {
+
+    type Error = HoconError<Rule>;
+
+    fn next_element_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
+        match self.iter.next() {
+            Some(value) => seed.deserialize(value).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        match self.iter.size_hint() {
+            (lower, Some(upper)) if lower == upper => Some(upper),
+            _ => None,
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+fn visit_object<'de, V: de::Visitor<'de>>(object: Object, visitor: V) -> Result<V::Value, HoconError<Rule>> {
+    let len = object.len();
+    let mut deserializer = ObjectDeserializer::new(object);
+    let map = visitor.visit_map(&mut deserializer)?;
+    let remaining = deserializer.iter.len();
+    if remaining == 0 {
+        Ok(map)
+    } else {
+        Err(HoconError::message("fewer elements in map"))
+    }
+}
+
+struct ObjectDeserializer {
+    iter: <Object as IntoIterator>::IntoIter,
+    value: Option<Value>,
+}
+
+impl ObjectDeserializer {
+    fn new(object: Object) -> Self {
+        ObjectDeserializer {
+            iter: object.into_iter(),
+            value: None,
+        }
+    }
+}
+
+impl<'de> de::MapAccess<'de> for ObjectDeserializer {
+
+    type Error = HoconError<Rule>;
+
+    fn next_key_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
+        match self.iter.next() {
+            Some((key, value)) => {
+                self.value = Some(value);
+                seed.deserialize(Value::String(key)).map(Some)
+            },
+            None => Ok(None),
+        }
+    }
+
+    fn next_value_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<T::Value, Self::Error> {
+        match self.value.take() {
+            Some(value) => seed.deserialize(value),
+            None => panic!("visit_value called before visit_key"),
+        }
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        match self.iter.size_hint() {
+            (lower, Some(upper)) if lower == upper => Some(upper),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> de::Deserializer<'de> for ObjectDeserializer {
+
+    type Error = HoconError<Rule>;
+
+    #[inline]
+    fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_map(self)
+    }
+
+    fn deserialize_ignored_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        drop(self);
+        visitor.visit_unit()
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes
+        byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct
+        map struct enum identifier
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {
@@ -494,5 +655,36 @@ mod tests {
 
         let v: Result<f64, _> = from_value(Value::Null);
         assert!(v.is_err(), "must not convert hocon::Value::Null into f64");
+    }
+
+    #[test]
+    fn value_array() {
+        let value = Value::Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]);
+        let v: Vec<i32> = from_value(value).expect("must deserialize hocon::Value::Array into vector of i32");
+        assert_eq!(&v, &[1, 2, 3]);
+
+        let value = Value::Array(vec![Value::Integer(3), Value::Integer(2), Value::Integer(1)]);
+        let v: Vec<u32> = from_value(value).expect("must deserialize hocon::Value::Array into vector of u32");
+        assert_eq!(&v, &[3, 2, 1]);
+    }
+
+    #[test]
+    fn value_object() {
+        let value = Value::Object({
+            let mut obj = Object::default();
+            obj.insert("field1".to_owned(), Value::Integer(1));
+            obj.insert("field2".to_owned(), Value::Integer(2));
+            obj.insert("field3".to_owned(), Value::Integer(3));
+            obj
+        });
+        let v: HashMap<String, i32> = from_value(value).expect("must deserialize hocon::Value::Object into map of i32");
+        let expected = {
+            let mut map = HashMap::default();
+            map.insert("field1".to_owned(), 1);
+            map.insert("field2".to_owned(), 2);
+            map.insert("field3".to_owned(), 3);
+            map
+        };
+        assert_eq!(v, expected);
     }
 }
