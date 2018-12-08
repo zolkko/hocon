@@ -1,28 +1,22 @@
 language: rust
-
 rust:
 - stable
 - beta
 - nightly
-
 sudo: required
-
 script:
 - cargo test
 - rustdoc --test README.md -L target
 - cargo doc --no-deps || echo "skipping cargo doc"
-
 after_success: |
   if [[ "$TRAVIS_RUST_VERSION" == stable ]]; then
     RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
     cargo tarpaulin --out Xml
     bash <(curl -s https://codecov.io/bash)
   fi
-
 notifications:
   email:
     on_success: never
-
 addons:
   apt:
     packages:
@@ -36,4 +30,4 @@ addons:
     - libiberty-dev
 env:
   global:
-    secure: jqb5QLAW0ACBWBPaxexXTPZJrqdPp1su7/GxRSPKmRIb6RpKFyipiwkn8jDUuY72+b4/oygPbziKXyU5S64yVhTbNrHmZ2xPoHl3S8eaOYk0jLmjYZhGtErpbgU85atXhk/G20yEb7CSV9oyxh5YqWBs6dWvsT+0bM3mslx35eqSRJsq2F55PpylBGZ3lQHb51+nry0sMH/ji+nWJaPWZY7GCmd6IX0PkEYTrf3ub++rZX05M/8c8eewOXoPZdQINSyQvPM28PipKzvVNG/o+YnwK1c2aN69MHciiznQmwNJI3OQsjLq5bfSXrfjjlmiTFsYNak0LdIU2rXmuz0B0ocjoX+gJAuxBD7lgqxQuUxupNXxfQv2oSo6/XAk6YkO5/0LNNhwA64CFmRZ1VGK45MXrGpAyBrNMG3lZJdh/JD9Tcn+MWNzcDOp0eJlCNoPCNEh12PG2Eottqctqz88XQdSpUyaK6ZLeMOIgC0n+kGWUzr5KbyarTAf591C9PRJUXCs4hZQCqOEvbtZs3P4yohG/C+5MNcD3eW+jSryOse1Z8qZD6kQqdHZA+O/MOxwXpbGi1HnteBNH5lKX0YOhnUEM5QlM1ZQ9vPjKKj61VjWkJ1bV5PphpPk5moU7LtCu+39XkgulqM3dIYdDv8tj1Pf9vkxzT0fcp8NMLv91NE=
+    secure: gxqjVqYAGxpa3qfTx/3+Enb7VloTH45xzeBvjPwuF6b8EeMOJqs4ZUPEKQU+q/x2HS+0iQXPEpZU/Pbm62C1FgzCgoZkgcbduwdyfvTS4jNqjwkyOKQ35MEIMpxLBZlwbcFZyKUTJzwWlSgYUvMWjf8HkUCsEKlwRxHCbvHKv97ekhkW4FJcu/vp4cHbRwbFn1fTybna6BGyvuJbgFlGiECIlbxU95XKMCNRlDifNNLM6d2jftz0tBPSXy17Y0+0TRuBmMP+/F5lJPhAvGpqSHOhgDxuCpbYp12Rinyj0pn2RLeZcBez+kU8VuGIEeufqcvDLiAYqgrm/QvXCBqwyLlsbhBI6pU4lBnVbpX7D61L005rjr2Z/khG9VNYTTNNS6AOYzo1ZBQwLd/v0l0zrN32qWnytfUQHX/misvdd4Ls9D4a2ekEJ4K4plho4tNxNKDUG8m7ivWhlAwGKgl6YE5++5dFV28zOLEG4Hi92WSnLwRvwK19UJ3Xzg/+Ubvr0Q9dRfJxruQkwxO7Z6IbxDSEiq3pCMPFm12al6kxnn2+d5KlZoQSF4Agk3Rh6HMWzghXh7IkYxf0jTGeJ0/y2COXid34NwxIy8MDF72UfH6/gFkpVHiRxRvbSXkmbLS07fEdhICb7EvFf4n73mJGc15JEKXHa86jJ3c8hUapDvE=
