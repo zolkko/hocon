@@ -8,6 +8,7 @@ use pest_derive::Parser;
 
 
 mod error;
+mod parser;
 mod value;
 mod de;
 
