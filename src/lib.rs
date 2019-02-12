@@ -12,6 +12,8 @@ mod parser;
 mod value;
 mod de;
 
+mod tsort;
+
 use self::value::{Array, Object, Value, ObjectOps};
 use self::error::HoconError;
 
