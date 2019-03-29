@@ -5,9 +5,9 @@ authors = ["zolkko <zolkko@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-pest = "2.0.2"
-pest_derive = "2.0.1"
-serde = "1.0.80"
+pest = "2.1.0"
+pest_derive = "2.1.0"
+serde = { version = "1.0" }
 
 [dev-dependencies]
-serde_derive = "1.0.81"
+serde_derive = { version = "1.0" }

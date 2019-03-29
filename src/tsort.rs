@@ -1,3 +1,5 @@
+//! The module contains a function to topologically sort dependency graph.
+
 use std::collections::VecDeque;
 use std::fmt;
 use std::error::Error;

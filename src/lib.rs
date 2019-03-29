@@ -10,7 +10,7 @@ use pest_derive::Parser;
 mod error;
 mod parser;
 mod value;
-mod de;
+pub mod de;
 
 mod tsort;
 
@@ -32,6 +32,19 @@ pub enum IncludePath {
 /// Type of handler function which must return content of a file/url to include.
 /// The first argument is a type of a resource to include and the second is a path or url.
 type IncludeHandler = for<'a> fn (IncludePath) -> Result<String, Box<dyn Error>>;
+
+type Path = Vec<String>;
+
+type Edge = (Path, Path);
+
+type Edges = Vec<Edge>;
+
+
+struct UnresolvedValue {
+    resolved: Value,
+    dependencies: Edges,
+    // TODO: unresolved list Vec<(Path, Vec<Value>)
+}
 
 /// Parser object
 #[derive(Parser)]
@@ -200,9 +213,10 @@ fn extract_string(string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
     }
 }
 
-/// Process `value` gramma rule by concatenating a list of item into a single value.
-/// This function also resolves substitutions.
-fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
+/// Process `value` grammar rule by concatenating a list of item into a single value.
+///
+/// A value can be either fully resolved or unresolved value.
+fn extract_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
     let value_chunks = value.into_inner();
     let mut input = value_chunks.clone();
 
@@ -251,7 +265,6 @@ fn concatenate_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
                 return concatenate_object(object, input);
             }
             Rule::substitution => {
-//                unimplemented!()
                 Ok(Value::String("not yet implemented".to_owned()))
             }
             _ => {
@@ -304,7 +317,8 @@ fn concatenate_array(mut result: Array, input: Pairs<Rule>) -> Result<Value, Hoc
 
 /// Because `span` start and end positions are relative to entire input, here I also
 /// pass an offset argument.
-fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>, input: Pairs<Rule>, str_value: &str, offset: usize) -> Result<Value, HoconError<Rule>> {
+fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>, input: Pairs<Rule>,
+                   str_value: &str, offset: usize) -> Result<Value, HoconError<Rule>> {
 
     for pair in input {
 
@@ -330,10 +344,26 @@ fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>,
                 result += &extract_string(pair)?;
             }
             Rule::substitution => {
-                unimplemented!()
+                if let Some(inner) = pair.into_inner().next() {
+                    match inner.as_rule() {
+                        Rule::required_substitution => {
+                            dbg!(inner);
+                            unimplemented!()
+                        },
+                        Rule::optional_substitution => {
+                            dbg!(inner);
+                            unimplemented!()
+                        },
+                        _ => {
+                            return Err((position, "expected optional or required substitution").into())
+                        }
+                    }
+                } else {
+                    return Err((position, "expected optional or required substitution").into())
+                }
             }
             _ => {
-                return Err((position, "cannot concatenate the value, expected s string").into());
+                return Err((position, "cannot concatenate the value, expected string").into());
             }
         }
     }
@@ -349,7 +379,7 @@ fn extract_array(array: Pair<Rule>) -> Result<Array, HoconError<Rule>> {
     let mut result: Array = Array::default();
     let array_values = array.into_inner();
     for array_item in array_values {
-        let value = concatenate_value(array_item)?;
+        let value = extract_value(array_item)?;
         result.push(value);
     }
     Ok(result)
@@ -363,14 +393,14 @@ fn extract_object(object: Pair<Rule>) -> Result<Option<Object>, HoconError<Rule>
     }
 }
 
-
+/// A value of a field can be either assigned or appended to an existing value.
 #[derive(Debug, PartialEq)]
 enum FieldOp {
     Assign(Vec<String>, Value),
     Append(Vec<String>, Value)
 }
 
-/// If an object has a body it must contain at least one field or include directive.
+/// If an object has a body it must contain at least one field or an include directive.
 fn extract_object_body(body: Pair<Rule>) -> Result<Object, HoconError<Rule>> {
 
     let mut result = Object::default();
@@ -392,12 +422,10 @@ fn extract_object_body(body: Pair<Rule>) -> Result<Object, HoconError<Rule>> {
                 }
             }
             Rule::include => {
-//                unimplemented!()
-//                if let Some(included_object) = self.process_include(pair) {
-//                    // TODO: merge included object into result
-//                }
+                // TODO: merge included object into result
+                unimplemented!("include operation is not implemented")
             }
-            _ => unreachable!("object_body grammar rule does not correspond to extraction logic")
+            _ => unreachable!()
         }
     }
 
@@ -429,14 +457,14 @@ fn extract_field(field: Pair<Rule>) -> Result<FieldOp, HoconError<Rule>> {
         match pair.as_rule() {
             Rule::field_append => {
                 if let Some(value_pair) = content.next() {
-                    concatenate_value(value_pair).map(|value| FieldOp::Append(path, value))
+                    extract_value(value_pair).map(|value| FieldOp::Append(path, value))
                 } else {
                     Err((position, "field grammar rule does not correspond to extraction logic").into())
                 }
             }
             Rule::field_assign => {
                 if let Some(value_pair) = content.next() {
-                    concatenate_value(value_pair).map(|value| FieldOp::Assign(path, value))
+                    extract_value(value_pair).map(|value| FieldOp::Assign(path, value))
                 } else {
                     Err((position, "field grammar rule does not correspond to extraction logic").into())
                 }
@@ -476,6 +504,19 @@ mod tests {
         println!("{:#?}", obj);
     }
 
+    /*
+    #[test]
+    fn extract_args() {
+        let input = r#"object {
+        field1 = hello ${all} string
+      }"#;
+
+        let obj_pair = HoconParser::parse(Rule::root, input).unwrap().next().unwrap();
+
+        let obj = extract_object(obj_pair);
+        dbg!(obj);
+        assert!(false)
+    }*/
 
     #[test]
     fn test_extract_field() {
@@ -525,7 +566,7 @@ mod tests {
 
         let value_pair = value_pairs.next().expect("value expected");
 
-        let value = concatenate_value(value_pair).expect("must concatenate");
+        let value = extract_value(value_pair).expect("must concatenate");
 
         assert_eq!(value, Value::Array(vec![
             Value::Integer(1),
