@@ -12,11 +12,29 @@ mod parser;
 mod value;
 pub mod de;
 
+mod ast;
+
 mod tsort;
 
 use self::value::{Array, Object, Value, ObjectOps};
 use self::error::HoconError;
+use std::collections::hash_map::Values;
 
+
+type KeyPath = Vec<String>;
+
+#[derive(Debug, PartialEq)]
+enum SubstitutionEntry {
+    Resolved(Value),
+    Required(KeyPath),
+    Optional(KeyPath)
+}
+
+#[derive(Debug, PartialEq)]
+enum ValueT {
+    Resolved(Value),
+    Substitution(Vec<SubstitutionEntry>)
+}
 
 /// When an "include" directive is encountered in a hocon file,
 /// a user is asked to provide it's raw content to the parser.
@@ -33,18 +51,6 @@ pub enum IncludePath {
 /// The first argument is a type of a resource to include and the second is a path or url.
 type IncludeHandler = for<'a> fn (IncludePath) -> Result<String, Box<dyn Error>>;
 
-type Path = Vec<String>;
-
-type Edge = (Path, Path);
-
-type Edges = Vec<Edge>;
-
-
-struct UnresolvedValue {
-    resolved: Value,
-    dependencies: Edges,
-    // TODO: unresolved list Vec<(Path, Vec<Value>)
-}
 
 /// Parser object
 #[derive(Parser)]
@@ -160,7 +166,7 @@ impl HoconParser {
             Rule::include_file => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = extract_string(string)?;
+                    let value = process_string(string)?;
                     Ok(IncludePath::File(value))
                 } else {
                     Err((position, "include file() directive must contain a single-quoted string").into())
@@ -169,7 +175,7 @@ impl HoconParser {
             Rule::include_url => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = extract_string(string)?;
+                    let value = process_string(string)?;
                     Ok(IncludePath::Url(value))
                 } else {
                     Err((position, "include url() directive must contain a single-quoted string").into())
@@ -178,7 +184,7 @@ impl HoconParser {
             Rule::include_classpath => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = extract_string(string)?;
+                    let value = process_string(string)?;
                     Ok(IncludePath::Classpath(value))
                 } else {
                     Err((position, "include classpath() directive must contain a single-quoted string").into())
@@ -187,7 +193,7 @@ impl HoconParser {
             Rule::include_string => {
                 let maybe_string = include_kind.into_inner().next();
                 if let Some(string) = maybe_string {
-                    let value = extract_string(string)?;
+                    let value = process_string(string)?;
                     Ok(IncludePath::SingleQuoted(value))
                 } else {
                     Err((position, "single-quoted include directive must contain a single-quoted string").into())
@@ -202,7 +208,7 @@ impl HoconParser {
 }
 
 /// Extracts a string from a `string` or a `multi-line string` rules.
-fn extract_string(string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
+fn process_string(string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
     let position = string.as_span().start_pos().line_col();
     let mut inners = string.into_inner();
     if let Some(inner) = inners.next() {
@@ -217,6 +223,7 @@ fn extract_string(string: Pair<Rule>) -> Result<String, HoconError<Rule>> {
 ///
 /// A value can be either fully resolved or unresolved value.
 fn extract_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
+
     let value_chunks = value.into_inner();
     let mut input = value_chunks.clone();
 
@@ -248,13 +255,10 @@ fn extract_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
                 return Ok(Value::Integer(value))
             }
             Rule::unquoted_string => {
-                let span = pair.as_span();
-                return concatenate_str(String::new(), Some((span.start(), span.end())), input, value_chunks.as_str(), span.start());
+                return process_string_value(pair, input, value_chunks.as_str());
             }
             Rule::string | Rule::mstring => {
-                let span = pair.as_span();
-                let result = extract_string(pair)?.to_owned();
-                return concatenate_str(result, None, input, value_chunks.as_str(), span.start());
+                return process_string_value(pair, input, value_chunks.as_str());
             }
             Rule::array => {
                 let array = extract_array(pair)?;
@@ -274,6 +278,22 @@ fn extract_value(value: Pair<Rule>) -> Result<Value, HoconError<Rule>> {
     } else {
         Ok(Value::Null)
     }
+}
+
+///
+fn process_substitution(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Value, HoconError<Rule>> {
+
+    let position = current_pair.as_span().start_pos().line_col();
+
+    match current_pair.as_rule() {
+        Rule::substitution => {
+            unimplemented!()
+        },
+        _ => {
+            return Err((position, "expected optional or required substitution").into())
+        }
+    }
+
 }
 
 fn concatenate_object(mut result: Object, input: Pairs<Rule>) -> Result<Value, HoconError<Rule>> {
@@ -315,12 +335,62 @@ fn concatenate_array(mut result: Array, input: Pairs<Rule>) -> Result<Value, Hoc
     Ok(Value::Array(result))
 }
 
+
+fn process_field_path(pair: Pair<Rule>) -> Result<KeyPath, HoconError<Rule>> {
+
+    let position = pair.as_span().start_pos().line_col();
+    let mut content = pair.into_inner();
+
+    if let Some(field_path) = content.next() {
+        let paths = field_path.into_inner();
+        let mut path = Vec::new();
+        for key in paths {
+            match key.as_rule() {
+                Rule::field_name => path.push(key.as_str().to_owned()),
+                Rule::string => path.push(process_string(key)?),
+                _ => unreachable!()
+            }
+        }
+        return Ok(path);
+    } else {
+        return Err((position, "field grammar rule does not correspond to extraction logic").into());
+    }
+}
+
+/// Process a sequence of one or more strings.
+///
 /// Because `span` start and end positions are relative to entire input, here I also
 /// pass an offset argument.
-fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>, input: Pairs<Rule>,
-                   str_value: &str, offset: usize) -> Result<Value, HoconError<Rule>> {
+fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string_repr: &str) -> Result<Value, HoconError<Rule>> {
 
-    for pair in input {
+    let offset = current_pair.as_span().start();
+
+    let mut result_with_subs: Vec<SubstitutionEntry> = Vec::new();
+    let mut result = String::new();
+
+    // There could be multiple unquoted strings followed one another,
+    // this variable holds the position of the first unquoted string in the sequence.
+    let mut unquoted_seq: Option<(usize, usize)> = None;
+    let mut last_substitution_end: Option<usize> = None;
+
+    {
+        let position = current_pair.as_span().start_pos().line_col();
+
+        match current_pair.as_rule() {
+            Rule::unquoted_string => {
+                let span = current_pair.as_span();
+                unquoted_seq = Some((span.start(), span.end()))
+            },
+            Rule::string | Rule::mstring => {
+                result += &process_string(current_pair)?;
+            },
+            _ => {
+                return Err((position, "quoted or unquoted string value is expected").into());
+            }
+        }
+    }
+
+    while let Some(pair) = input.next() {
 
         let position = pair.as_span().start_pos().line_col();
 
@@ -333,35 +403,47 @@ fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>,
                         Some((span.start(), span.end()))
                     }
                 };
-            }
+            },
             Rule::string | Rule::mstring => {
 
+                last_substitution_end = None;
+
                 if let Some((s, e)) = unquoted_seq {
-                    result += &str_value[(s - offset)..(e - offset)];
+                    result += &string_repr[(s - offset)..(e - offset)];
                     unquoted_seq = None;
                 }
 
-                result += &extract_string(pair)?;
-            }
+                result += &process_string(pair)?;
+            },
             Rule::substitution => {
                 if let Some(inner) = pair.into_inner().next() {
-                    match inner.as_rule() {
-                        Rule::required_substitution => {
-                            dbg!(inner);
-                            unimplemented!()
-                        },
-                        Rule::optional_substitution => {
-                            dbg!(inner);
-                            unimplemented!()
-                        },
+
+                    if let Some((s, e)) = unquoted_seq {
+                        let current_start = inner.as_span().start();
+                        result += &string_repr[(s - offset)..(current_start - offset)];
+                        unquoted_seq = None;
+                    }
+
+                    let span = inner.as_span();
+                    last_substitution_end = Some(span.end());
+
+                    let position = span.start_pos().line_col();
+
+                    result_with_subs.push(SubstitutionEntry::Resolved(Value::String(result)));
+                    result_with_subs.push(match inner.as_rule() {
+                        Rule::required_substitution => SubstitutionEntry::Required(process_field_path(inner)?),
+                        Rule::optional_substitution => SubstitutionEntry::Optional(process_field_path(inner)?),
                         _ => {
                             return Err((position, "expected optional or required substitution").into())
                         }
-                    }
+                    });
+
+                    result = String::new();
+
                 } else {
                     return Err((position, "expected optional or required substitution").into())
                 }
-            }
+            },
             _ => {
                 return Err((position, "cannot concatenate the value, expected string").into());
             }
@@ -369,10 +451,53 @@ fn concatenate_str(mut result: String, mut unquoted_seq: Option<(usize, usize)>,
     }
 
     if let Some((s, e)) = unquoted_seq {
-        result += &str_value[(s - offset)..(e - offset)];
+        result += &string_repr[(s - offset)..(e - offset)];
     }
 
-    Ok(Value::String(result))
+    if result_with_subs.is_empty() {
+        Ok(Value::String(result))
+    } else {
+
+        let mut r = String::new();
+        for i in result_with_subs {
+            match i {
+                SubstitutionEntry::Resolved(Value::String(s)) => {
+                    r += &s;
+                },
+                SubstitutionEntry::Optional(ref key_path) => {
+                    r += "%";
+                    for (i, k) in key_path.iter().enumerate() {
+                        if i > 0 {
+                            r += ".";
+                        }
+                        r += k;
+                    }
+                    r += "%";
+                },
+                SubstitutionEntry::Required(ref key_path) => {
+                    r += "%";
+                    for (i, k) in key_path.iter().enumerate() {
+                        if i > 0 {
+                            r += ".";
+                        }
+                        r += k;
+                    }
+                    r += "%";
+                },
+                _ => {
+                    r += "%";
+                    r += "field";
+                    r += "%";
+                }
+            }
+        }
+
+        if !result.is_empty() {
+            r += &result;
+        }
+
+        Ok(Value::String(r))
+    }
 }
 
 fn extract_array(array: Pair<Rule>) -> Result<Array, HoconError<Rule>> {
@@ -443,7 +568,7 @@ fn extract_field(field: Pair<Rule>) -> Result<FieldOp, HoconError<Rule>> {
         for key in paths {
             match key.as_rule() {
                 Rule::field_name => path.push(key.as_str().to_owned()),
-                Rule::string => path.push(extract_string(key)?),
+                Rule::string => path.push(process_string(key)?),
                 _ => unreachable!()
             }
         }
@@ -491,6 +616,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_processing_quoted_strings() {
+        let input = r#"field: "the string" " value""#;
+
+        let parser = HoconParser::new();
+        let result = parser.parse_str(input).expect("must parse the input");
+
+        let expected_object = Value::Object({
+            let mut obj = Object::new();
+            obj.insert("field".to_owned(), Value::String("the string value".to_owned()));
+            obj
+        });
+
+        assert_eq!(expected_object, result);
+    }
+
+    #[test]
+    fn test_processing_unquoted_strings() {
+        let input = r#"
+            field: the string value
+        "#;
+
+        let parser = HoconParser::new();
+        let result = parser.parse_str(input).expect("must parse the input");
+
+        let expected_object = Value::Object({
+            let mut obj = Object::new();
+            obj.insert("field".to_owned(), Value::String("the string value".to_owned()));
+            obj
+        });
+
+        assert_eq!(expected_object, result);
+    }
+
+    #[test]
+    fn test_processing_mixed_strings() {
+        let input = r#"
+            field: the " string " value
+        "#;
+
+        let parser = HoconParser::new();
+        let result = parser.parse_str(input).expect("must parse the input");
+
+        let expected_object = Value::Object({
+            let mut obj = Object::new();
+            obj.insert("field".to_owned(), Value::String("the string value".to_owned()));
+            obj
+        });
+
+        assert_eq!(expected_object, result);
+    }
+
+    #[test]
+    fn test_processing_substitution_inside_string() {
+        let input = r#"
+            field: this   is   the    ${?subfield.name} value another
+        "#;
+
+        let parser = HoconParser::new();
+        let result = parser.parse_str(input).expect("must parse the input");
+
+        let expected_object = Value::Object({
+            let mut obj = Object::new();
+            obj.insert("field".to_owned(), Value::String("the string value another".to_owned()));
+            obj
+        });
+
+        assert_eq!(expected_object, result);
+    }
+
+    #[test]
     fn test_extract_object() {
         let input = r#"requirements {
         field1 =
@@ -503,20 +698,6 @@ mod tests {
         let obj = extract_object(obj_pair);
         println!("{:#?}", obj);
     }
-
-    /*
-    #[test]
-    fn extract_args() {
-        let input = r#"object {
-        field1 = hello ${all} string
-      }"#;
-
-        let obj_pair = HoconParser::parse(Rule::root, input).unwrap().next().unwrap();
-
-        let obj = extract_object(obj_pair);
-        dbg!(obj);
-        assert!(false)
-    }*/
 
     #[test]
     fn test_extract_field() {
