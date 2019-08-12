@@ -1,12 +1,23 @@
 use std::default::Default;
 use std::error::Error;
 
+use pest::Parser;
 use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
 
 
+pub(crate) type BoxError = Box<dyn Error>;
+
+pub(crate) type Path = Vec<String>;
+
+/// Unquoted hocon string may contain a substitution inside it.
+/// Thus a complete unresolved hocon string consists of multiple parts.
 #[derive(PartialEq, Clone, Debug)]
-pub(crate) struct Path(Vec<String>);
+pub(crate) enum StringPart {
+    String(String),
+    Substitution(Path),
+    OptionalSubstitution(Path),
+}
 
 #[derive(PartialEq, Clone, Debug)]
 pub(crate) enum Value {
@@ -14,24 +25,30 @@ pub(crate) enum Value {
     Bool(bool),
     Integer(isize),
     Float(f64),
-    String(String),
+    String(Vec<StringPart>),
     Array(Array),
     Object(Object),
     Substitution(Path),
     OptionalSubstitution(Path),
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub struct Object(Vec<(Path, Value)>);
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) enum FieldOp {
+    Assign(Path, Value),
+    Append(Path, Value)
+}
+
+#[derive(Default, PartialEq, Clone, Debug)]
+pub(crate) struct Object(Vec<FieldOp>);
 
 impl Object {
-    fn append(&mut self, key: Path, value: Value) {
-        self.0.push((key, value));
+    fn append(&mut self, field: FieldOp) {
+        self.0.push(field);
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub struct Array(Vec<Value>);
+#[derive(Default, PartialEq, Clone, Debug)]
+pub(crate) struct Array(Vec<Value>);
 
 impl Array {
     fn append(&mut self, value: Value) {
@@ -39,12 +56,10 @@ impl Array {
     }
 }
 
-type BoxError = Box<dyn Error>;
-
 /// Parser object
 #[derive(Parser)]
 #[grammar = "hocon.pest"]
-pub struct AstParser {
+pub(crate) struct AstParser {
 }
 
 impl Default for AstParser {
@@ -195,7 +210,7 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
     let array_values = array.into_inner();
     for array_item in array_values {
         let value = parse_value(array_item)?;
-        result.push(value);
+        result.append(value);
     }
     Ok(result)
 }
@@ -220,14 +235,18 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
             Rule::float => {
                 let value = match pair.as_str().parse() {
                     Ok(v) => v,
-                    Err(error) => return Err(error.into()) // (position, error).into()
+                    Err(error) => {
+                        return Err(format!("{:?} {:?}", error, position).into());
+                    }
                 };
                 return Ok(Value::Float(value))
             }
             Rule::int => {
                 let value = match pair.as_str().parse() {
                     Ok(v) => v,
-                    Err(error) => return Err(error.into()) // (position, error).into()
+                    Err(error) => {
+                        return Err(format!("{:?} {:?}", error, position).into());
+                    }
                 };
                 return Ok(Value::Integer(value))
             }
@@ -238,15 +257,15 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
                 return process_string_value(pair, input, value_chunks.as_str());
             }
             Rule::array => {
-                let array = parse_array(pair)?;
-                return concatenate_array(array, input);
+                return parse_array(pair).map(|arr| Value::Array(arr));
             }
             Rule::object => {
-                let object = parse_object(pair)?.unwrap_or_else(|| Object::default());
-                return concatenate_object(object, input);
+                parse_object(pair).map(|obj| {
+                    Value::Object(obj.unwrap_or_else(|| Object::default()))
+                })
             }
             Rule::substitution => {
-                Ok(Value::String("not yet implemented".to_owned()))
+                Ok(Value::String(vec![StringPart::String("not yet implemented".to_owned())]))
             }
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
@@ -257,57 +276,11 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
     }
 }
 
-fn concatenate_array(mut result: Array, input: Pairs<Rule>) -> Result<Value, BoxError> {
-    for pair in input {
-        let position = pair.as_span().start_pos().line_col();
-        match pair.as_rule() {
-            Rule::array => {
-                result.extend(parse_array(pair)?);
-            }
-            Rule::substitution => {
-                unimplemented!()
-            }
-            _ => {
-                return Err((position, "cannot concatenate the value, expected an array").into());
-            }
-        }
-    }
-    Ok(Value::Array(result))
-}
-
-fn concatenate_object(mut result: Object, input: Pairs<Rule>) -> Result<Value, BoxError> {
-    for pair in input {
-        let position = pair.as_span().start_pos().line_col();
-        match pair.as_rule() {
-            Rule::object => {
-                if let Some(object) = parse_object(pair)? {
-                    result.merge_object(&object);
-                }
-            }
-            Rule::substitution => {
-                unimplemented!()
-            }
-            _ => {
-                return Err(format!("cannot concatenate the value, expected an object, pos: {:?}", position).into());
-            }
-        }
-    }
-
-    Ok(Value::Object(result))
-}
-
 fn parse_object(object: Pair<Rule>) -> Result<Option<Object>, BoxError> {
     match object.into_inner().next() {
         Some(body) => parse_object_body(body).map(|obj| Some(obj)),
         None => Ok(None)
     }
-}
-
-/// A value of a field can be either assigned or appended to an existing value.
-#[derive(Debug, PartialEq)]
-enum FieldOp {
-    Assign(Vec<String>, Value),
-    Append(Vec<String>, Value)
 }
 
 fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
@@ -369,16 +342,8 @@ fn parse_object_body(body: Pair<Rule>) -> Result<Object, BoxError> {
         let position = pair.as_span().start_pos().line_col();
         match pair.as_rule() {
             Rule::field => {
-                match parse_field(pair)? {
-                    FieldOp::Assign(field_path, value) => {
-                        result.assign_value(&field_path[..], value);
-                    },
-                    FieldOp::Append(field_path, value) => {
-                        if let Err(error) = result.append_value(&field_path[..], value) {
-                            return Err(error.into()); // (position, error).into()
-                        }
-                    }
-                }
+                let field = parse_field(pair)?;
+                result.append(field);
             }
             Rule::include => {
                 // TODO: merge included object into result
@@ -401,13 +366,6 @@ fn process_string(string: Pair<Rule>) -> Result<String, BoxError> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum SubstitutionEntry {
-    Resolved(Value),
-    Required(Vec<String>),
-    Optional(Vec<String>),
-}
-
 fn process_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
     let position = pair.as_span().start_pos().line_col();
     let mut content = pair.into_inner();
@@ -428,10 +386,12 @@ fn process_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
     }
 }
 
+/// A hocon string may contain a substitution, so we have to split the string into
+/// parts.
 fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string_repr: &str) -> Result<Value, BoxError> {
     let offset = current_pair.as_span().start();
 
-    let mut result_with_subs: Vec<SubstitutionEntry> = Vec::new();
+    let mut string_parts: Vec<StringPart> = Vec::new();
     let mut result = String::new();
 
     // There could be multiple unquoted strings followed one another,
@@ -452,12 +412,11 @@ fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string
             },
             _ => {
                 return Err(format!("quoted or unquoted string value is expected, pos {:?}", position).into());
-            }
+            },
         }
     }
 
     while let Some(pair) = input.next() {
-
         let position = pair.as_span().start_pos().line_col();
 
         match pair.as_rule() {
@@ -471,14 +430,11 @@ fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string
                 };
             },
             Rule::string | Rule::mstring => {
-
                 last_substitution_end = None;
-
                 if let Some((s, e)) = unquoted_seq {
                     result += &string_repr[(s - offset)..(e - offset)];
                     unquoted_seq = None;
                 }
-
                 result += &process_string(pair)?;
             },
             Rule::substitution => {
@@ -495,73 +451,39 @@ fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string
 
                     let position = span.start_pos().line_col();
 
-                    result_with_subs.push(SubstitutionEntry::Resolved(Value::String(result)));
-                    result_with_subs.push(match inner.as_rule() {
-                        Rule::required_substitution => SubstitutionEntry::Required(process_field_path(inner)?),
-                        Rule::optional_substitution => SubstitutionEntry::Optional(process_field_path(inner)?),
+                    string_parts.push(StringPart::String(result));
+                    string_parts.push(match inner.as_rule() {
+                        Rule::required_substitution => {
+                            let key_path = process_field_path(inner)?;
+                            StringPart::Substitution(key_path)
+                        },
+                        Rule::optional_substitution => {
+                            let key_path = process_field_path(inner)?;
+                            StringPart::OptionalSubstitution(key_path)
+                        },
                         _ => {
                             return Err(format!("expected optional or required substitution, pos {:?}", position).into())
-                        }
+                        },
                     });
-
                     result = String::new();
-
                 } else {
                     return Err(format!("expected optional or required substitution, pos {:?}", position).into())
                 }
             },
             _ => {
                 return Err(format!("cannot concatenate the value, expected string, pos {:?}", position).into());
-            }
+            },
         }
     }
 
     if let Some((s, e)) = unquoted_seq {
-        result += &string_repr[(s - offset)..(e - offset)];
+        let part = string_repr[(s - offset)..(e - offset)].to_owned();
+        string_parts.push(StringPart::String(part));
     }
 
-    if result_with_subs.is_empty() {
-        Ok(Value::String(result))
-    } else {
-
-        let mut r = String::new();
-        for i in result_with_subs {
-            match i {
-                SubstitutionEntry::Resolved(Value::String(s)) => {
-                    r += &s;
-                },
-                SubstitutionEntry::Optional(ref key_path) => {
-                    r += "%";
-                    for (i, k) in key_path.iter().enumerate() {
-                        if i > 0 {
-                            r += ".";
-                        }
-                        r += k;
-                    }
-                    r += "%";
-                },
-                SubstitutionEntry::Required(ref key_path) => {
-                    r += "%";
-                    for (i, k) in key_path.iter().enumerate() {
-                        if i > 0 {
-                            r += ".";
-                        }
-                        r += k;
-                    }
-                    r += "%";
-                },
-                _ => {
-                    r += "%";
-                    r += "field";
-                    r += "%";
-                }
-            }
-        }
-
-        if !result.is_empty() {
-            r += &result;
-        }
-
-        Ok(Value::String(r))
+    if !result.is_empty() {
+        string_parts.push(StringPart::String(result));
     }
+
+    Ok(Value::String(string_parts))
 }
