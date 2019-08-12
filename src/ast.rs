@@ -10,8 +10,27 @@ pub(crate) type BoxError = Box<dyn Error>;
 
 pub(crate) type Path = Vec<String>;
 
+/// When an "include" directive is encountered in a hocon file,
+/// a user is asked to provide it's raw content to the parser.
+///
+/// All the files are resolved
+#[derive(PartialEq, Clone, Debug)]
+pub(crate) enum IncludePath {
+    SingleQuoted(String),
+    Url(String),
+    File(String),
+    Classpath(String)
+}
+
+/// An include directive can be either required or non required.
+#[derive(PartialEq, Clone, Debug)]
+pub(crate) enum Include {
+    Required(IncludePath),
+    NonRequired(IncludePath),
+}
+
 /// Unquoted hocon string may contain a substitution inside it.
-/// Thus a complete unresolved hocon string consists of multiple parts.
+/// Thus a complete unresolved Hocon string consists of multiple parts.
 #[derive(PartialEq, Clone, Debug)]
 pub(crate) enum StringPart {
     String(String),
@@ -35,7 +54,8 @@ pub(crate) enum Value {
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum FieldOp {
     Assign(Path, Value),
-    Append(Path, Value)
+    Append(Path, Value),
+    Incl(Include),
 }
 
 #[derive(Default, PartialEq, Clone, Debug)]
@@ -88,121 +108,18 @@ impl AstParser {
                 Ok(Value::Array(array))
             },
             Rule::object => {
-                let object = parse_object(pair)?.unwrap_or_else(|| Object::default());
+                let object = parse_object(pair)?;
                 Ok(Value::Object(object))
             },
             Rule::object_body => {
                 let object = parse_object_body(pair)?;
                 Ok(Value::Object(object))
             },
-            _ => unreachable!("root grammar rule does not correspond to processing logic")
-        }
-    }
-
-    /*
-    fn parse_include_root(&self, input: &str) -> Result<Object, HoconError<Rule>> {
-        let mut parsed = AstParser::parse(Rule::root, input)?;
-
-        let root_pair = parsed.next().unwrap();
-        let mut pairs = root_pair.into_inner();
-        let pair = pairs.next().unwrap();
-
-        match pair.as_rule() {
-            Rule::object => {
-                Ok(extract_object(pair)?.unwrap_or_else(|| Object::default()))
-            }
-            Rule::object_body => {
-                Ok(extract_object_body(pair)?)
-            }
             _ => {
-                Err(((0, 0), "root element of an included file must be an object").into())
-            }
+                unreachable!("root grammar rule does not correspond to processing logic")
+            },
         }
     }
-
-    fn process_include(&self, include: Pair<Rule>) -> Option<HashMap<String, Value>> {
-        let result = HashMap::default();
-        let pair = include.into_inner().next().expect("regular include or required include, malformed grammar");
-
-        match pair.as_rule() {
-            Rule::required_include => {
-                if let Some(ref handler) = self.include_handler {
-                    let pair = pair.into_inner().next().expect("regular_include");
-                    self.process_regular_include(pair, handler)
-                } else {
-                    panic!("required include");
-                }
-            }
-            Rule::regular_include => {
-                if let Some(ref handler) = self.include_handler {
-                    self.process_regular_include(pair, handler)
-                }
-            }
-            _ => {
-                panic!("expected required include or regular include")
-            }
-        }
-
-        Some(result)
-    }
-
-    fn process_regular_include(&self, regular_include: Pair<Rule>, handler: &IncludeHandler) {
-        let include_kind = self.extract_include_path(regular_include).expect("propagate the error");
-        let obj = handler(include_kind);
-    }
-
-    fn extract_include_path(&self, pair: Pair<Rule>) -> Result<IncludePath, HoconError<Rule>> {
-        let position = pair.as_span().start_pos().line_col();
-        let include_kind = if let Some(ik) = pair.into_inner().next() {
-            ik
-        } else {
-            return Err((position, "include directive must be followed by either file(), url(), classpath() or single-quoted string").into())
-        };
-
-        let position = include_kind.as_span().start_pos().line_col();
-        match include_kind.as_rule() {
-            Rule::include_file => {
-                let maybe_string = include_kind.into_inner().next();
-                if let Some(string) = maybe_string {
-                    let value = process_string(string)?;
-                    Ok(IncludePath::File(value))
-                } else {
-                    Err((position, "include file() directive must contain a single-quoted string").into())
-                }
-            },
-            Rule::include_url => {
-                let maybe_string = include_kind.into_inner().next();
-                if let Some(string) = maybe_string {
-                    let value = process_string(string)?;
-                    Ok(IncludePath::Url(value))
-                } else {
-                    Err((position, "include url() directive must contain a single-quoted string").into())
-                }
-            },
-            Rule::include_classpath => {
-                let maybe_string = include_kind.into_inner().next();
-                if let Some(string) = maybe_string {
-                    let value = process_string(string)?;
-                    Ok(IncludePath::Classpath(value))
-                } else {
-                    Err((position, "include classpath() directive must contain a single-quoted string").into())
-                }
-            },
-            Rule::include_string => {
-                let maybe_string = include_kind.into_inner().next();
-                if let Some(string) = maybe_string {
-                    let value = process_string(string)?;
-                    Ok(IncludePath::SingleQuoted(value))
-                } else {
-                    Err((position, "single-quoted include directive must contain a single-quoted string").into())
-                }
-            },
-            _ => {
-                Err((position, "include directive must be followed by either file(), url(), classpath() or single-quoted string").into())
-            }
-        }
-    }
-    */
 }
 
 fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
@@ -260,9 +177,7 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
                 return parse_array(pair).map(|arr| Value::Array(arr));
             }
             Rule::object => {
-                parse_object(pair).map(|obj| {
-                    Value::Object(obj.unwrap_or_else(|| Object::default()))
-                })
+                return parse_object(pair).map(|obj| Value::Object(obj));
             }
             Rule::substitution => {
                 Ok(Value::String(vec![StringPart::String("not yet implemented".to_owned())]))
@@ -276,10 +191,10 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
     }
 }
 
-fn parse_object(object: Pair<Rule>) -> Result<Option<Object>, BoxError> {
+fn parse_object(object: Pair<Rule>) -> Result<Object, BoxError> {
     match object.into_inner().next() {
-        Some(body) => parse_object_body(body).map(|obj| Some(obj)),
-        None => Ok(None)
+        Some(body) => parse_object_body(body),
+        None => Ok(Object::default())
     }
 }
 
@@ -320,12 +235,8 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
                 }
             }
             Rule::object => {
-                if let Some(obj) = parse_object(pair)? {
-                    Ok(FieldOp::Assign(path, Value::Object(obj)))
-                } else {
-                    // TODO: assign nothing
-                    Ok(FieldOp::Assign(path, Value::Object(Object::default())))
-                }
+                let obj = parse_object(pair)?;
+                Ok(FieldOp::Assign(path, Value::Object(obj)))
             }
             _ => unreachable!()
         }
@@ -344,11 +255,11 @@ fn parse_object_body(body: Pair<Rule>) -> Result<Object, BoxError> {
             Rule::field => {
                 let field = parse_field(pair)?;
                 result.append(field);
-            }
+            },
             Rule::include => {
-                // TODO: merge included object into result
-                unimplemented!("include operation is not implemented")
-            }
+                let incl = parse_include(pair)?;
+                result.append(FieldOp::Incl(incl));
+            },
             _ => unreachable!()
         }
     }
@@ -486,4 +397,78 @@ fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string
     }
 
     Ok(Value::String(string_parts))
+}
+
+fn parse_include(include: Pair<Rule>) -> Result<Include, BoxError> {
+    let position = include.as_span().start_pos().line_col();
+    let pair = include.into_inner().next().expect("regular include or required include, malformed grammar");
+    match pair.as_rule() {
+        Rule::required_include => {
+            let pair = pair.into_inner().next().expect("regular_include");
+            parse_include_path(pair).map(|i| Include::Required(i))
+        },
+        Rule::regular_include => {
+            parse_include_path(pair).map(|i| Include::NonRequired(i))
+        },
+        _ => {
+            Err(format!("expected required include or regular include, pos {:?}", position).into())
+        },
+    }
+}
+
+fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
+    let position = pair.as_span().start_pos().line_col();
+    let include_kind = if let Some(ik) = pair.into_inner().next() {
+        ik
+    } else {
+        return Err(format!("include directive must be followed by either file(), url(), classpath() or single-quoted string, pos {:?}", position).into());
+    };
+
+    let position = include_kind.as_span().start_pos().line_col();
+    match include_kind.as_rule() {
+        Rule::include_file => {
+            let maybe_string = include_kind.into_inner().next();
+            if let Some(string) = maybe_string {
+                let value = process_string(string)?;
+                Ok(IncludePath::File(value))
+            } else {
+                Err(format!("include file() directive must contain a single-quoted string, pos {:?}", position).into())
+            }
+        },
+        Rule::include_url => {
+            let maybe_string = include_kind.into_inner().next();
+            if let Some(string) = maybe_string {
+                let value = process_string(string)?;
+                Ok(IncludePath::Url(value))
+            } else {
+                Err(format!("include url() directive must contain a single-quoted string, pos {:?}", position).into())
+            }
+        },
+        Rule::include_classpath => {
+            let maybe_string = include_kind.into_inner().next();
+            if let Some(string) = maybe_string {
+                let value = process_string(string)?;
+                Ok(IncludePath::Classpath(value))
+            } else {
+                Err(format!("include classpath() directive must contain a single-quoted string, pos {:?}", position).into())
+            }
+        },
+        Rule::include_string => {
+            let maybe_string = include_kind.into_inner().next();
+            if let Some(string) = maybe_string {
+                let value = process_string(string)?;
+                Ok(IncludePath::SingleQuoted(value))
+            } else {
+                Err(format!("single-quoted include directive must contain a single-quoted string, pos {:?}", position).into())
+            }
+        },
+        _ => {
+            Err(format!("include directive must be followed by either file(), url(), classpath() or single-quoted string, pos {:?}", position).into())
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
 }
