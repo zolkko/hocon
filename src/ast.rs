@@ -145,50 +145,44 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
 
         match pair.as_rule() {
             Rule::null => {
-                return Ok(Value::Null)
-            }
+                Ok(Value::Null)
+            },
             Rule::bool_true => {
-                return Ok(Value::Bool(true))
-            }
+                Ok(Value::Bool(true))
+            },
             Rule::bool_false => {
-                return Ok(Value::Bool(false))
-            }
+                Ok(Value::Bool(false))
+            },
             Rule::float => {
-                let value = match pair.as_str().parse() {
-                    Ok(v) => v,
-                    Err(error) => {
-                        return Err(format!("{:?} {:?}", error, position).into());
-                    }
-                };
-                return Ok(Value::Float(value))
-            }
+                match pair.as_str().parse() {
+                    Ok(v) => Ok(Value::Float(v)),
+                    Err(error) => Err(format!("{:?} {:?}", error, position).into()),
+                }
+            },
             Rule::int => {
-                let value = match pair.as_str().parse() {
-                    Ok(v) => v,
-                    Err(error) => {
-                        return Err(format!("{:?} {:?}", error, position).into());
-                    }
-                };
-                return Ok(Value::Integer(value))
-            }
+                match pair.as_str().parse() {
+                    Ok(v) => Ok(Value::Integer(v)),
+                    Err(error) => Err(format!("{:?} {:?}", error, position).into()),
+                }
+            },
             Rule::unquoted_string => {
-                return process_string_value(pair, input, value_chunks.as_str());
-            }
+                process_string_value(pair, input, value_chunks.as_str())
+            },
             Rule::string | Rule::mstring => {
-                return process_string_value(pair, input, value_chunks.as_str());
-            }
+                process_string_value(pair, input, value_chunks.as_str())
+            },
             Rule::array => {
-                return parse_array(pair).map(|arr| Value::Array(arr));
-            }
+                parse_array(pair).map(|arr| Value::Array(arr))
+            },
             Rule::object => {
-                return parse_object(pair).map(|obj| Value::Object(obj));
-            }
+                parse_object(pair).map(|obj| Value::Object(obj))
+            },
             Rule::substitution => {
-                return parse_substitution(pair).map(|sub| Value::Substitution(sub));
-            }
+                parse_substitution(pair).map(|sub| Value::Substitution(sub))
+            },
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
-            }
+            },
         }
     } else {
         Ok(Value::Null)
