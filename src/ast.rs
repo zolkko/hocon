@@ -29,13 +29,18 @@ pub(crate) enum Include {
     NonRequired(IncludePath),
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub(crate) enum Substitution {
+    Required(Path),
+    Optional(Path),
+}
+
 /// Unquoted hocon string may contain a substitution inside it.
 /// Thus a complete unresolved Hocon string consists of multiple parts.
 #[derive(PartialEq, Clone, Debug)]
 pub(crate) enum StringPart {
     String(String),
-    Substitution(Path),
-    OptionalSubstitution(Path),
+    Substitution(Substitution),
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -47,8 +52,7 @@ pub(crate) enum Value {
     String(Vec<StringPart>),
     Array(Array),
     Object(Object),
-    Substitution(Path),
-    OptionalSubstitution(Path),
+    Substitution(Substitution),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -180,7 +184,7 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
                 return parse_object(pair).map(|obj| Value::Object(obj));
             }
             Rule::substitution => {
-                return parse_substitution(pair);
+                return parse_substitution(pair).map(|sub| Value::Substitution(sub));
             }
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
@@ -191,18 +195,18 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
     }
 }
 
-fn parse_substitution(pair: Pair<Rule>) -> Result<Value, BoxError> {
+fn parse_substitution(pair: Pair<Rule>) -> Result<Substitution, BoxError> {
     let position = pair.as_span().start_pos().line_col();
     if let Some(inner) = pair.into_inner().next() {
         match inner.as_rule() {
             Rule::required_substitution => {
                 let key_path = process_field_path(inner)?;
-                Ok(Value::Substitution(key_path))
+                Ok(Substitution::Required(key_path))
 
             },
             Rule::optional_substitution => {
                 let key_path = process_field_path(inner)?;
-                Ok(Value::OptionalSubstitution(key_path))
+                Ok(Substitution::Optional(key_path))
             },
             _ => {
                 Err(format!("expected optional or required substitution, pos {:?}", position).into())
@@ -388,11 +392,11 @@ fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string
                     string_parts.push(match inner.as_rule() {
                         Rule::required_substitution => {
                             let key_path = process_field_path(inner)?;
-                            StringPart::Substitution(key_path)
+                            StringPart::Substitution(Substitution::Required(key_path))
                         },
                         Rule::optional_substitution => {
                             let key_path = process_field_path(inner)?;
-                            StringPart::OptionalSubstitution(key_path)
+                            StringPart::Substitution(Substitution::Optional(key_path))
                         },
                         _ => {
                             return Err(format!("expected optional or required substitution, pos {:?}", position).into())
