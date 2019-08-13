@@ -180,7 +180,7 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
                 return parse_object(pair).map(|obj| Value::Object(obj));
             }
             Rule::substitution => {
-                Ok(Value::String(vec![StringPart::String("not yet implemented".to_owned())]))
+                return parse_substitution(pair);
             }
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
@@ -188,6 +188,28 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
         }
     } else {
         Ok(Value::Null)
+    }
+}
+
+fn parse_substitution(pair: Pair<Rule>) -> Result<Value, BoxError> {
+    let position = pair.as_span().start_pos().line_col();
+    if let Some(inner) = pair.into_inner().next() {
+        match inner.as_rule() {
+            Rule::required_substitution => {
+                let key_path = process_field_path(inner)?;
+                Ok(Value::Substitution(key_path))
+
+            },
+            Rule::optional_substitution => {
+                let key_path = process_field_path(inner)?;
+                Ok(Value::OptionalSubstitution(key_path))
+            },
+            _ => {
+                Err(format!("expected optional or required substitution, pos {:?}", position).into())
+            },
+        }
+    } else {
+        Err(format!("expected a substitution, pos {:?}", position).into())
     }
 }
 
