@@ -491,4 +491,52 @@ fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
+
+
+    #[test]
+    fn test_include() {
+        let examples = [
+            (
+                r#"include "some value""#,
+                Include::NonRequired(IncludePath::SingleQuoted("some value".to_owned()))
+            ),
+            (
+                r#"include url("http://example.com")"#,
+                Include::NonRequired(IncludePath::Url("http://example.com".to_owned()))
+            ),
+            (
+                r#"include file("test.txt")"#,
+                Include::NonRequired(IncludePath::File("test.txt".to_owned()))
+            ),
+            (
+                r#"include classpath("classpath")"#,
+                Include::NonRequired(IncludePath::Classpath("classpath".to_owned()))
+            ),
+
+            (
+                r#"include required("some value")"#,
+                Include::Required(IncludePath::SingleQuoted("some value".to_owned()))
+            ),
+            (
+                r#"include required(url("http://example.com"))"#,
+                Include::Required(IncludePath::Url("http://example.com".to_owned()))
+            ),
+            (
+                r#"include required(file("test.txt"))"#,
+                Include::Required(IncludePath::File("test.txt".to_owned()))
+            ),
+            (
+                r#"include required(classpath("classpath"))"#,
+                Include::Required(IncludePath::Classpath("classpath".to_owned()))
+            ),
+        ];
+
+        for (input, expected) in examples.iter() {
+            let include_pair = AstParser::parse(Rule::include, input).unwrap().next().unwrap();
+            let res = parse_include(include_pair).expect(format!("failed to parse {}", input).as_ref());
+            assert_eq!(&res, expected);
+        }
+    }
+
 }
