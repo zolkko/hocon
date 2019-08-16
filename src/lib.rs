@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(expected_object, result);
     }
 
-    #[test]
+    /*#[test]
     fn test_processing_substitution_inside_string() {
         let input = r#"
             field: this   is   the    ${?subfield.name} value another
@@ -683,7 +683,7 @@ mod tests {
         });
 
         assert_eq!(expected_object, result);
-    }
+    }*/
 
     #[test]
     fn test_extract_object() {
