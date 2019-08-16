@@ -194,12 +194,12 @@ fn parse_substitution(pair: Pair<Rule>) -> Result<Substitution, BoxError> {
     if let Some(inner) = pair.into_inner().next() {
         match inner.as_rule() {
             Rule::required_substitution => {
-                let key_path = process_field_path(inner)?;
+                let key_path = process_field_paths(inner)?;
                 Ok(Substitution::Required(key_path))
 
             },
             Rule::optional_substitution => {
-                let key_path = process_field_path(inner)?;
+                let key_path = process_field_paths(inner)?;
                 Ok(Substitution::Optional(key_path))
             },
             _ => {
@@ -297,24 +297,27 @@ fn process_string(string: Pair<Rule>) -> Result<String, BoxError> {
     }
 }
 
-fn process_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
+fn process_field_paths(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
     let position = pair.as_span().start_pos().line_col();
     let mut content = pair.into_inner();
 
     if let Some(field_path) = content.next() {
-        let paths = field_path.into_inner();
-        let mut path = Vec::new();
-        for key in paths {
-            match key.as_rule() {
-                Rule::field_name => path.push(key.as_str().to_owned()),
-                Rule::string => path.push(process_string(key)?),
-                _ => unreachable!()
-            }
-        }
-        return Ok(path);
+        process_field_path(field_path)
     } else {
-        return Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into());
+        Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
     }
+}
+
+fn process_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
+    let mut path = Vec::new();
+    for key in pair.into_inner() {
+        match key.as_rule() {
+            Rule::field_name => path.push(key.as_str().to_owned()),
+            Rule::string => path.push(process_string(key)?),
+            _ => unreachable!()
+        }
+    }
+    Ok(path)
 }
 
 /// A hocon string may contain a substitution, so we have to split the string into
@@ -385,11 +388,11 @@ fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string
                     string_parts.push(StringPart::String(result));
                     string_parts.push(match inner.as_rule() {
                         Rule::required_substitution => {
-                            let key_path = process_field_path(inner)?;
+                            let key_path = process_field_paths(inner)?;
                             StringPart::Substitution(Substitution::Required(key_path))
                         },
                         Rule::optional_substitution => {
-                            let key_path = process_field_path(inner)?;
+                            let key_path = process_field_paths(inner)?;
                             StringPart::Substitution(Substitution::Optional(key_path))
                         },
                         _ => {
@@ -539,4 +542,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_process_field_path() {
+        let examples = [
+            (r#"part"#, vec!["part".to_owned()]),
+            (r#""some part""#, vec!["some part".to_owned()]),
+            (r#"part1.part2"#, vec!["part1".to_owned(), "part2".to_owned()]),
+            (r#""part 1"."part 2""#, vec!["part 1".to_owned(), "part 2".to_owned()]),
+        ];
+
+        for (input, expected) in examples.iter() {
+            let field_path_pair = AstParser::parse(Rule::field_path, input).unwrap().next().unwrap();
+            let res = process_field_path(field_path_pair).expect(format!("failed to parse {}", input).as_ref());
+            assert_eq!(&res, expected);
+        }
+    }
 }
