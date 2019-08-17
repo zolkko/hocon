@@ -223,16 +223,7 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
     let mut content = field.into_inner();
 
     let path = if let Some(field_path) = content.next() {
-        let paths = field_path.into_inner();
-        let mut path = Vec::new();
-        for key in paths {
-            match key.as_rule() {
-                Rule::field_name => path.push(key.as_str().to_owned()),
-                Rule::string => path.push(process_string(key)?),
-                _ => unreachable!()
-            }
-        }
-        path
+        process_field_path(field_path)?
     } else {
         return Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into());
     };
