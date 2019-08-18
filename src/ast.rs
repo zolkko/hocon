@@ -130,13 +130,13 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
     let mut result: Array = Array::default();
     let array_values = array.into_inner();
     for array_item in array_values {
-        let value = parse_value(array_item)?;
+        let (value, _deps) = parse_value(array_item)?;
         result.append(value);
     }
     Ok(result)
 }
 
-fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
+fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError> {
     let value_chunks = value.into_inner();
     let mut input = value_chunks.clone();
 
@@ -145,47 +145,63 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
 
         match pair.as_rule() {
             Rule::null => {
-                Ok(Value::Null)
+                Ok((Value::Null, None))
             },
             Rule::bool_true => {
-                Ok(Value::Bool(true))
+                Ok((Value::Bool(true), None))
             },
             Rule::bool_false => {
-                Ok(Value::Bool(false))
+                Ok((Value::Bool(false), None))
             },
             Rule::float => {
                 match pair.as_str().parse() {
-                    Ok(v) => Ok(Value::Float(v)),
+                    Ok(v) => Ok((Value::Float(v), None)),
                     Err(error) => Err(format!("{:?} {:?}", error, position).into()),
                 }
             },
             Rule::int => {
                 match pair.as_str().parse() {
-                    Ok(v) => Ok(Value::Integer(v)),
+                    Ok(v) => Ok((Value::Integer(v), None)),
                     Err(error) => Err(format!("{:?} {:?}", error, position).into()),
                 }
             },
             Rule::unquoted_string => {
-                process_string_value(pair, input, value_chunks.as_str())
+                let value = process_string_value(pair, input, value_chunks.as_str())?;
+                // TODO: deps
+                Ok((value, None))
             },
             Rule::string | Rule::mstring => {
-                process_string_value(pair, input, value_chunks.as_str())
+                let value = process_string_value(pair, input, value_chunks.as_str())?;
+                // TODO: deps
+                Ok((value, None))
             },
             Rule::array => {
-                parse_array(pair).map(|arr| Value::Array(arr))
+                parse_array(pair).map(|arr| {
+                    // TODO: deps
+                    (Value::Array(arr), None)
+                })
             },
             Rule::object => {
-                parse_object(pair).map(|obj| Value::Object(obj))
+                parse_object(pair).map(|obj| {
+                    // TODO: deps
+                    (Value::Object(obj), None)
+                })
             },
             Rule::substitution => {
-                parse_substitution(pair).map(|sub| Value::Substitution(sub))
+                parse_substitution(pair).map(|sub| {
+                    let dep_path = match sub {
+                        Substitution::Required(ref path) => path.clone(),
+                        Substitution::Optional(ref path) => path.clone(),
+                    };
+                    (Value::Substitution(sub), Some(vec![dep_path]))
+                })
             },
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
             },
         }
     } else {
-        Ok(Value::Null)
+        Ok((Value::Null, None))
     }
 }
 
@@ -233,14 +249,14 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
         match pair.as_rule() {
             Rule::field_append => {
                 if let Some(value_pair) = content.next() {
-                    parse_value(value_pair).map(|value| FieldOp::Append(path, value))
+                    parse_value(value_pair).map(|(value, _deps)| FieldOp::Append(path, value))
                 } else {
                     Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
                 }
             }
             Rule::field_assign => {
                 if let Some(value_pair) = content.next() {
-                    parse_value(value_pair).map(|value| FieldOp::Assign(path, value))
+                    parse_value(value_pair).map(|(value, _deps)| FieldOp::Assign(path, value))
                 } else {
                     Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
                 }
