@@ -498,6 +498,14 @@ fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
     }
 }
 
+fn is_self_reference(a: &[String], b: &[String]) -> bool {
+    if a.len() <= b.len() {
+        a.iter().zip(b).all(|(x, y)| x == y)
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
