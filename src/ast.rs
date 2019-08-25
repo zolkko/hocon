@@ -640,6 +640,54 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_string_value() {
+        let string_value_examples = [
+            (
+                r#"string value"#,
+                Value::String(vec![StringPart::String("string value".to_owned())]),
+            ),
+            (
+                r#""quoted string value""#,
+                Value::String(vec![StringPart::String("quoted string value".to_owned())]),
+            ),
+            (
+                r#""first string" " second string""#,
+                Value::String(vec![
+                    StringPart::String("first string second string".to_owned()),
+                ]),
+            ),
+            (
+                r#""first string " 123 " second string""#,
+                Value::String(vec![
+                    StringPart::String("first string 123 second string".to_owned()),
+                ]),
+            ),
+            (
+                r#""first string " ${value} " second string""#,
+                Value::String(vec![
+                    StringPart::String("first string ".to_owned()),
+                    StringPart::Substitution(Substitution::Required(vec!["value".to_owned()])),
+                    StringPart::String(" second string".to_owned()),
+                ]),
+            ),
+            (
+                r#"123 " first string " ${value} " second string""#,
+                Value::String(vec![
+                    StringPart::String("123 first string ".to_owned()),
+                    StringPart::Substitution(Substitution::Required(vec!["value".to_owned()])),
+                    StringPart::String(" second string".to_owned()),
+                ]),
+            ),
+        ];
+
+        for (example_input, expected_str_value) in string_value_examples.iter() {
+            let value_ast = AstParser::parse(Rule::value, example_input).unwrap().next().unwrap();
+            let (string_value, _) = parse_value(value_ast).expect("must parse array");
+            assert_eq!(&string_value, expected_str_value);
+        }
+    }
+
+    #[test]
     fn test_parse_array_value() {
         let examples = [
             (
