@@ -1,5 +1,6 @@
 use std::default::Default;
 use std::error::Error;
+use std::collections::HashMap;
 
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -43,6 +44,15 @@ pub(crate) enum StringPart {
     Substitution(Substitution),
 }
 
+/// An array may consists of one or more arrays and substitution expressions
+/// which must be merged into a single array value when the container object
+/// gets resolved.
+#[derive(PartialEq, Clone, Debug)]
+pub(crate) enum ArrayPart {
+    Array(Array),
+    Substitution(Substitution),
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub(crate) enum Value {
     Null,
@@ -50,7 +60,7 @@ pub(crate) enum Value {
     Integer(isize),
     Float(f64),
     String(Vec<StringPart>),
-    Array(Array),
+    Array(Vec<ArrayPart>),
     Object(Object),
     Substitution(Substitution),
 }
@@ -63,11 +73,97 @@ pub(crate) enum FieldOp {
 }
 
 #[derive(Default, PartialEq, Clone, Debug)]
-pub(crate) struct Object(Vec<FieldOp>);
+pub(crate) struct Object(HashMap<String, Value>);
 
 impl Object {
     fn append(&mut self, field: FieldOp) {
-        self.0.push(field);
+        match field {
+            FieldOp::Assign(path, value) => {
+
+            },
+            FieldOp::Append(path, value) => {
+
+            },
+            FieldOp::Incl(include) => {
+
+            },
+        }
+    }
+
+    fn assign_value(&mut self, path: &[String], value: Value) -> Result<(), Box<dyn Error>> {
+        if let Some((key, tail)) = path.split_first() {
+            if tail.is_empty() {
+                self.0.insert(key.clone(), value);
+                Ok(())
+            } else {
+                if let Some(Value::Object(sub_obj)) = self.0.get_mut(key.as_str()) {
+                    sub_obj.assign_value(tail, value)
+                } else {
+                    let mut sub_obj = Object::default();
+                    let () = sub_obj.assign_value(tail, value)?;
+                    self.0.insert(key.clone(), Value::Object(sub_obj));
+                    Ok(())
+                }
+            }
+        } else {
+            Err("empty path".into())
+        }
+    }
+
+    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), Box<dyn Error>> {
+        if let Some((key, tail)) = path.split_first() {
+            if tail.is_empty() {
+                if let Some(existing_value) = self.0.get_mut(key) {
+                    match existing_value {
+                        Value::Array(array) => {
+                            if let Some((ArrayPart::Array(last), _)) = array.split_last_mut() {
+                                last.0.push(value);
+                            } else {
+                                array.push(ArrayPart::Array(Array(vec![value])));
+                            }
+                            Ok(())
+                        },
+                        Value::Substitution(sub) => {
+                            let parts = vec![
+                                ArrayPart::Substitution(sub.clone()),
+                                ArrayPart::Array(Array(vec![value])),
+                            ];
+                            self.0.insert(key.clone(), Value::Array(parts));
+                            Ok(())
+                        },
+                        _ => Err("incompatible type".into()),
+                    }
+                } else {
+                    self.0.insert(key.clone(), value);
+                    Ok(())
+                }
+            } else {
+                if !self.0.contains_key(key.as_str()) {
+                    self.0.insert(key.clone(), Value::Object(Object::default()));
+                }
+                if let Some(Value::Object(sub_obj)) = self.0.get_mut(key.as_str()) {
+                    sub_obj.append_value(tail, value)
+                } else {
+                    Err("invalid path type".into())
+                }
+            }
+        } else {
+            Err("empty path".into())
+        }
+    }
+
+    fn merge_object(&mut self, second: &Object) {
+        for (k, v) in second.0.iter() {
+            if let Value::Object(ref from) = v {
+                if let Some(Value::Object(to)) = self.0.get_mut(k.as_str()) {
+                    to.merge_object(from);
+                } else {
+                    self.0.insert(k.clone(), v.clone());
+                }
+            } else {
+                self.0.insert(k.clone(), v.clone());
+            }
+        }
     }
 }
 
@@ -108,8 +204,7 @@ impl AstParser {
 
         match pair.as_rule() {
             Rule::array => {
-                let array = parse_array(pair)?;
-                Ok(Value::Array(array))
+                parse_arrays(pair, pairs)
             },
             Rule::object => {
                 let object = parse_object(pair)?;
@@ -124,16 +219,6 @@ impl AstParser {
             },
         }
     }
-}
-
-fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
-    let mut result: Array = Array::default();
-    let array_values = array.into_inner();
-    for array_item in array_values {
-        let (value, _deps) = parse_value(array_item)?;
-        result.append(value);
-    }
-    Ok(result)
 }
 
 fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError> {
@@ -176,9 +261,9 @@ fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError
                 Ok((value, None))
             },
             Rule::array => {
-                parse_array(pair).map(|arr| {
+                parse_arrays(pair, input).map(|v| {
                     // TODO: deps
-                    (Value::Array(arr), None)
+                    (v, None)
                 })
             },
             Rule::object => {
@@ -203,6 +288,30 @@ fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError
     } else {
         Ok((Value::Null, None))
     }
+}
+
+/// An array value may consists of
+fn parse_arrays(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Value, BoxError> {
+    let mut array_parts = vec![ArrayPart::Array(parse_array(current_pair)?)];
+    for pair in input {
+        let part = match pair.as_rule() {
+            Rule::array => ArrayPart::Array(parse_array(pair)?),
+            Rule::substitution => ArrayPart::Substitution(parse_substitution(pair)?),
+            _ => unreachable!("grammar rule definitions do not correspond to the source code"),
+        };
+        array_parts.push(part);
+    }
+    Ok(Value::Array(array_parts))
+}
+
+fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
+    let mut result: Array = Array::default();
+    let array_values = array.into_inner();
+    for array_item in array_values {
+        let (value, _deps) = parse_value(array_item)?;
+        result.append(value);
+    }
+    Ok(result)
 }
 
 fn parse_substitution(pair: Pair<Rule>) -> Result<Substitution, BoxError> {
@@ -511,6 +620,45 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn test_parse_array() {
+        let array_ast = AstParser::parse(Rule::array, r#"[1,2,3]"#).unwrap().next().unwrap();
+        let array = parse_array(array_ast).expect("must parse array");
+        assert_eq!(array, Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
+    }
+
+    #[test]
+    fn test_parse_array_value() {
+        let examples = [
+            (
+                r#"[4, 5, 6]"#,
+                Value::Array(vec![
+                    ArrayPart::Array(Array(vec![Value::Integer(4), Value::Integer(5), Value::Integer(6)])),
+                ]),
+            ),
+            (
+                r#"[1, 2, 3] [4, 5, 6]"#,
+                Value::Array(vec![
+                    ArrayPart::Array(Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)])),
+                    ArrayPart::Array(Array(vec![Value::Integer(4), Value::Integer(5), Value::Integer(6)])),
+                ]),
+            ),
+            (
+                r#"[1, 2, 3] ${subs} [4, 5, 6]"#,
+                Value::Array(vec![
+                    ArrayPart::Array(Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)])),
+                    ArrayPart::Substitution(Substitution::Required(vec!["subs".to_owned()])),
+                    ArrayPart::Array(Array(vec![Value::Integer(4), Value::Integer(5), Value::Integer(6)])),
+                ]),
+            ),
+        ];
+
+        for (example, expected) in examples.iter() {
+            let value_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
+            let (array_value, _) = parse_value(value_ast).expect("must parse array");
+            assert_eq!(&array_value, expected);
+        }
+    }
 
     #[test]
     fn test_include() {
