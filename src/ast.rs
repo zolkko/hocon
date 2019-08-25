@@ -204,15 +204,13 @@ impl AstParser {
 
         match pair.as_rule() {
             Rule::array => {
-                parse_arrays(pair, pairs)
+                parse_arrays(pair, pairs).map(|v| Value::Array(v))
             },
             Rule::object => {
-                let object = parse_object(pair)?;
-                Ok(Value::Object(object))
+                parse_object(pair).map(|v| Value::Object(v))
             },
             Rule::object_body => {
-                let object = parse_object_body(pair)?;
-                Ok(Value::Object(object))
+                parse_object_body(pair).map(|v| Value::Object(v))
             },
             _ => {
                 unreachable!("root grammar rule does not correspond to processing logic")
@@ -263,7 +261,7 @@ fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError
             Rule::array => {
                 parse_arrays(pair, input).map(|v| {
                     // TODO: deps
-                    (v, None)
+                    (Value::Array(v), None)
                 })
             },
             Rule::object => {
@@ -273,12 +271,8 @@ fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError
                 })
             },
             Rule::substitution => {
-                parse_substitution(pair).map(|sub| {
-                    let dep_path = match sub {
-                        Substitution::Required(ref path) => path.clone(),
-                        Substitution::Optional(ref path) => path.clone(),
-                    };
-                    (Value::Substitution(sub), Some(vec![dep_path]))
+                parse_substitutions(pair, input).map(|v| {
+                    (v, None)
                 })
             },
             _ => {
@@ -291,7 +285,7 @@ fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError
 }
 
 /// An array value may consists of
-fn parse_arrays(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Value, BoxError> {
+fn parse_arrays(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Vec<ArrayPart>, BoxError> {
     let mut array_parts = vec![ArrayPart::Array(parse_array(current_pair)?)];
     for pair in input {
         let part = match pair.as_rule() {
@@ -301,7 +295,7 @@ fn parse_arrays(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Valu
         };
         array_parts.push(part);
     }
-    Ok(Value::Array(array_parts))
+    Ok(array_parts)
 }
 
 fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
@@ -312,6 +306,24 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
         result.append(value);
     }
     Ok(result)
+}
+
+fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>)  -> Result<Value, BoxError> {
+    let subs = parse_substitution(current_pair)?;
+    if let Some(next) = input.next() {
+        match next.as_rule() {
+            Rule::array => {
+                let mut array_value = parse_arrays(next, input)?;
+                array_value.insert(0, ArrayPart::Substitution(subs));
+                Ok(Value::Array(array_value))
+            },
+            _ => {
+                unimplemented!("not yet implemented")
+            },
+        }
+    } else {
+        Ok(Value::Substitution(subs))
+    }
 }
 
 fn parse_substitution(pair: Pair<Rule>) -> Result<Substitution, BoxError> {
@@ -649,6 +661,20 @@ mod tests {
                     ArrayPart::Array(Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)])),
                     ArrayPart::Substitution(Substitution::Required(vec!["subs".to_owned()])),
                     ArrayPart::Array(Array(vec![Value::Integer(4), Value::Integer(5), Value::Integer(6)])),
+                ]),
+            ),
+            (
+                r#"[10, 11, 12] ${var}"#,
+                Value::Array(vec![
+                    ArrayPart::Array(Array(vec![Value::Integer(10), Value::Integer(11), Value::Integer(12)])),
+                    ArrayPart::Substitution(Substitution::Required(vec!["var".to_owned()])),
+                ]),
+            ),
+            (
+                r#"${variabe} [7, 8, 9]"#,
+                Value::Array(vec![
+                    ArrayPart::Substitution(Substitution::Required(vec!["variabe".to_owned()])),
+                    ArrayPart::Array(Array(vec![Value::Integer(7), Value::Integer(8), Value::Integer(9)])),
                 ]),
             ),
         ];
