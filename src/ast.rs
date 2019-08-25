@@ -309,20 +309,35 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
 }
 
 fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>)  -> Result<Value, BoxError> {
-    let subs = parse_substitution(current_pair)?;
-    if let Some(next) = input.next() {
-        match next.as_rule() {
-            Rule::array => {
-                let mut array_value = parse_arrays(next, input)?;
-                array_value.insert(0, ArrayPart::Substitution(subs));
-                Ok(Value::Array(array_value))
-            },
-            _ => {
-                unimplemented!("not yet implemented")
-            },
+    let sub = parse_substitution(current_pair)?;
+    let mut subs = vec![sub];
+
+    loop {
+        if let Some(next) = input.next() {
+            match next.as_rule() {
+                Rule::substitution => {
+                    let sub = parse_substitution(next)?;
+                    subs.push(sub)
+                },
+                Rule::array => {
+                    let array_value = parse_arrays(next, input)?;
+                    let mut result_array: Vec<_> = subs.into_iter().map(|s| ArrayPart::Substitution(s)).collect();
+                    result_array.extend(array_value);
+
+                    return Ok(Value::Array(result_array));
+                },
+                _ => {
+                    unimplemented!("not yet implemented")
+                },
+            }
+        } else {
+            if subs.len() == 1 {
+                return Ok(Value::Substitution(subs.remove(0)));
+            } else {
+                let parts = subs.into_iter().map(|v| StringPart::Substitution(v)).collect();
+                return Ok(Value::String(parts));
+            }
         }
-    } else {
-        Ok(Value::Substitution(subs))
     }
 }
 
@@ -723,6 +738,14 @@ mod tests {
                 Value::Array(vec![
                     ArrayPart::Substitution(Substitution::Required(vec!["variabe".to_owned()])),
                     ArrayPart::Array(Array(vec![Value::Integer(7), Value::Integer(8), Value::Integer(9)])),
+                ]),
+            ),
+            (
+                r#"${variable1} ${variable2} [1, 2, 3]"#,
+                Value::Array(vec![
+                    ArrayPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
+                    ArrayPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
+                    ArrayPart::Array(Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)])),
                 ]),
             ),
         ];
