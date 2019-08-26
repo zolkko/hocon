@@ -32,7 +32,8 @@ required_include    = { ^"required(" ~ regular_include ~ ")" }
 include             = { ^"include" ~ NEWLINE* ~ (required_include | regular_include) }
 
 // Strings
-unquoted_string_end = _{ "//" | NEWLINE | WHITESPACE | "$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "," | "+" | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" }
+// unquoted_string_end = _{ "//" | NEWLINE | WHITESPACE | "$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "," | "+" | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" }
+unquoted_string_end = _{ "//" | NEWLINE | "$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "," | "+" | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" }
 unquoted_string     = @{ (!unquoted_string_end ~ ANY)+ }
 
 mstring = ${ "\"\"\"" ~ minner ~ "\"\"\"" }

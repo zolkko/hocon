@@ -219,7 +219,7 @@ impl AstParser {
     }
 }
 
-fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError> {
+fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
     let value_chunks = value.into_inner();
     let mut input = value_chunks.clone();
 
@@ -228,59 +228,56 @@ fn parse_value(value: Pair<Rule>) -> Result<(Value, Option<Vec<Path>>), BoxError
 
         match pair.as_rule() {
             Rule::null => {
-                Ok((Value::Null, None))
+                Ok(Value::Null)
             },
             Rule::bool_true => {
-                Ok((Value::Bool(true), None))
+                Ok(Value::Bool(true))
             },
             Rule::bool_false => {
-                Ok((Value::Bool(false), None))
+                Ok(Value::Bool(false))
             },
             Rule::float => {
                 match pair.as_str().parse() {
-                    Ok(v) => Ok((Value::Float(v), None)),
+                    Ok(v) => Ok(Value::Float(v)),
                     Err(error) => Err(format!("{:?} {:?}", error, position).into()),
                 }
             },
             Rule::int => {
                 match pair.as_str().parse() {
-                    Ok(v) => Ok((Value::Integer(v), None)),
+                    Ok(v) => Ok(Value::Integer(v)),
                     Err(error) => Err(format!("{:?} {:?}", error, position).into()),
                 }
             },
             Rule::unquoted_string => {
-                let value = process_string_value(pair, input, value_chunks.as_str())?;
-                // TODO: deps
-                Ok((value, None))
+                let first = process_string(pair)?;
+                let parts = parse_string_parts(input)?;
+                dbg!(parts);
+                // process_string_value(pair, input, value_chunks.as_str())
+                panic!("FINISHED1");
             },
             Rule::string | Rule::mstring => {
-                let value = process_string_value(pair, input, value_chunks.as_str())?;
-                // TODO: deps
-                Ok((value, None))
+                let s = process_string(pair)?;
+                let mut result = vec![StringPart::String(s)];
+                result.extend(parse_string_parts(input)?);
+                dbg!(&result);
+                //Ok(Value::String(result));
+                panic!("FINISHED2");
             },
             Rule::array => {
-                parse_arrays(pair, input).map(|v| {
-                    // TODO: deps
-                    (Value::Array(v), None)
-                })
+                parse_arrays(pair, input).map(|v| Value::Array(v))
             },
             Rule::object => {
-                parse_object(pair).map(|obj| {
-                    // TODO: deps
-                    (Value::Object(obj), None)
-                })
+                parse_object(pair).map(|obj| Value::Object(obj))
             },
             Rule::substitution => {
-                parse_substitutions(pair, input).map(|v| {
-                    (v, None)
-                })
+                parse_substitutions(pair, input)
             },
             _ => {
                 unreachable!("grammar rule definitions do not correspond to the source code")
             },
         }
     } else {
-        Ok((Value::Null, None))
+        Ok(Value::Null)
     }
 }
 
@@ -302,13 +299,41 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
     let mut result: Array = Array::default();
     let array_values = array.into_inner();
     for array_item in array_values {
-        let (value, _deps) = parse_value(array_item)?;
+        let value = parse_value(array_item)?;
         result.append(value);
     }
     Ok(result)
 }
 
-fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>)  -> Result<Value, BoxError> {
+fn parse_string_parts(pairs: Pairs<Rule>) -> Result<Vec<StringPart>, BoxError> {
+    let mut result = Vec::new();
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::substitution => {
+                result.push(StringPart::Substitution(parse_substitution(pair)?))
+            },
+            Rule::string | Rule::mstring => {
+                result.push(StringPart::String(process_string(pair)?))
+            },
+            Rule::unquoted_string => {
+                result.push(StringPart::String(process_string(pair)?))
+            },
+            _ => unreachable!("wrong parser rules"),
+        }
+    }
+    //    if last_unquoted {
+    //        if let Some(StringPart::String(s)) = result.pop() {
+    //            let trimmed_string = s.trim_end().to_owned();
+    //            result.push( StringPart::String(trimmed_string));
+    //        }
+    //    }
+    //    last_unquoted = false;
+    Ok(result)
+}
+
+fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Value, BoxError> {
+    let full_str = input.as_str();
+
     let sub = parse_substitution(current_pair)?;
     let mut subs = vec![sub];
 
@@ -318,6 +343,13 @@ fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>)  -> Res
                 Rule::substitution => {
                     let sub = parse_substitution(next)?;
                     subs.push(sub)
+                },
+                Rule::string | Rule::unquoted_string | Rule::mstring => {
+                    let pos = next.as_span().start();
+                    dbg!(full_str);
+                    dbg!(pos);
+                    panic!("FINISHED...");
+                    // let value = process_string_value(pair, input, value_chunks)?;
                 },
                 Rule::array => {
                     let array_value = parse_arrays(next, input)?;
@@ -385,14 +417,14 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
         match pair.as_rule() {
             Rule::field_append => {
                 if let Some(value_pair) = content.next() {
-                    parse_value(value_pair).map(|(value, _deps)| FieldOp::Append(path, value))
+                    parse_value(value_pair).map(|value| FieldOp::Append(path, value))
                 } else {
                     Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
                 }
             }
             Rule::field_assign => {
                 if let Some(value_pair) = content.next() {
-                    parse_value(value_pair).map(|(value, _deps)| FieldOp::Assign(path, value))
+                    parse_value(value_pair).map(|value| FieldOp::Assign(path, value))
                 } else {
                     Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
                 }
@@ -678,18 +710,27 @@ mod tests {
                 ]),
             ),
             (
-                r#""first string " ${value} " second string""#,
+                r#""1 string " ${variable} " 2 string""#,
                 Value::String(vec![
-                    StringPart::String("first string ".to_owned()),
-                    StringPart::Substitution(Substitution::Required(vec!["value".to_owned()])),
+                    StringPart::String("1 string ".to_owned()),
+                    StringPart::Substitution(Substitution::Required(vec!["variable".to_owned()])),
+                    StringPart::String(" 2 string".to_owned()),
+                ]),
+            ),
+            (
+                r#"123 " first string " ${variable1} " second string""#,
+                Value::String(vec![
+                    StringPart::String("123 first string ".to_owned()),
+                    StringPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
                     StringPart::String(" second string".to_owned()),
                 ]),
             ),
             (
-                r#"123 " first string " ${value} " second string""#,
+                r#"${variable1} " first string " ${variable2} " second string""#,
                 Value::String(vec![
+                    StringPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
                     StringPart::String("123 first string ".to_owned()),
-                    StringPart::Substitution(Substitution::Required(vec!["value".to_owned()])),
+                    StringPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                     StringPart::String(" second string".to_owned()),
                 ]),
             ),
@@ -697,7 +738,7 @@ mod tests {
 
         for (example_input, expected_str_value) in string_value_examples.iter() {
             let value_ast = AstParser::parse(Rule::value, example_input).unwrap().next().unwrap();
-            let (string_value, _) = parse_value(value_ast).expect("must parse array");
+            let string_value = parse_value(value_ast).expect("must parse array");
             assert_eq!(&string_value, expected_str_value);
         }
     }
@@ -752,7 +793,7 @@ mod tests {
 
         for (example, expected) in examples.iter() {
             let value_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
-            let (array_value, _) = parse_value(value_ast).expect("must parse array");
+            let array_value = parse_value(value_ast).expect("must parse array");
             assert_eq!(&array_value, expected);
         }
     }
