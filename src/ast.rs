@@ -248,20 +248,8 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
                     Err(error) => Err(format!("{:?} {:?}", error, position).into()),
                 }
             },
-            Rule::unquoted_string => {
-                let first = process_string(pair)?;
-                let parts = parse_string_parts(input)?;
-                dbg!(parts);
-                // process_string_value(pair, input, value_chunks.as_str())
-                panic!("FINISHED1");
-            },
-            Rule::string | Rule::mstring => {
-                let s = process_string(pair)?;
-                let mut result = vec![StringPart::String(s)];
-                result.extend(parse_string_parts(input)?);
-                dbg!(&result);
-                //Ok(Value::String(result));
-                panic!("FINISHED2");
+            Rule::unquoted_string | Rule::string | Rule::mstring => {
+                parse_string_parts(pair, input).map(|v| Value::String(v))
             },
             Rule::array => {
                 parse_arrays(pair, input).map(|v| Value::Array(v))
@@ -305,68 +293,108 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
     Ok(result)
 }
 
-fn parse_string_parts(pairs: Pairs<Rule>) -> Result<Vec<StringPart>, BoxError> {
+/// If a string contain an escape sequence, the sequence must be decoded by the parser.
+fn unescape_string(string: &str) -> String {
+    // TODO: unescape string
+    string.to_owned()
+}
+
+/// The function handles a single or multi quoted string
+fn process_string(string: Pair<Rule>) -> Result<String, BoxError> {
+    let position = string.as_span().start_pos().line_col();
+    let mut inners = string.into_inner();
+    if let Some(inner) = inners.next() {
+        Ok(unescape_string(inner.as_str()))
+    } else {
+        // TODO: otherwise this is a error in the parser grammar, so this is unreachable
+        Err(format!("a string must have a content, pos {:?}", position).into())
+    }
+}
+
+/// A string value may consists of multiple sub-strings and substitutions.
+fn parse_string_parts(pair: Pair<Rule>, pairs: Pairs<Rule>) -> Result<Vec<StringPart>, BoxError> {
     let mut result = Vec::new();
+    let mut last: Option<String> = None;
+
+    match pair.as_rule() {
+        Rule::substitution => {
+            result.push(StringPart::Substitution(parse_substitution(pair)?));
+        },
+        Rule::string | Rule::mstring => {
+            result.push(StringPart::String(process_string(pair)?));
+        },
+        Rule::unquoted_string => {
+            last = Some(pair.as_str().to_owned());
+        },
+        _ => {
+            unreachable!("string, unquoted_string or mstring expected");
+        },
+    }
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::substitution => {
+                if let Some(l) = last.take() {
+                    result.push(StringPart::String(unescape_string(l.trim_end())));
+                }
                 result.push(StringPart::Substitution(parse_substitution(pair)?))
             },
             Rule::string | Rule::mstring => {
+                if let Some(l) = last.take() {
+                    result.push(StringPart::String(unescape_string(l.trim_end())));
+                }
                 result.push(StringPart::String(process_string(pair)?))
             },
             Rule::unquoted_string => {
-                result.push(StringPart::String(process_string(pair)?))
+                if let Some(l) = last.take() {
+                    result.push(StringPart::String(unescape_string(l.as_ref())));
+                }
+                last = Some(pair.as_str().to_owned());
             },
-            _ => unreachable!("wrong parser rules"),
+            _ => {
+                unreachable!("string, unquoted_string or mstring expected");
+            },
         }
     }
-    //    if last_unquoted {
-    //        if let Some(StringPart::String(s)) = result.pop() {
-    //            let trimmed_string = s.trim_end().to_owned();
-    //            result.push( StringPart::String(trimmed_string));
-    //        }
-    //    }
-    //    last_unquoted = false;
+
+    if let Some(l) = last.take() {
+        result.push(StringPart::String(unescape_string(l.trim_end())));
+    }
+
     Ok(result)
 }
 
 fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Value, BoxError> {
-    let full_str = input.as_str();
-
-    let sub = parse_substitution(current_pair)?;
-    let mut subs = vec![sub];
-
+    let substitution = parse_substitution(current_pair)?;
+    let mut substitutions = vec![substitution];
     loop {
         if let Some(next) = input.next() {
             match next.as_rule() {
                 Rule::substitution => {
-                    let sub = parse_substitution(next)?;
-                    subs.push(sub)
+                    substitutions.push(parse_substitution(next)?);
                 },
                 Rule::string | Rule::unquoted_string | Rule::mstring => {
-                    let pos = next.as_span().start();
-                    dbg!(full_str);
-                    dbg!(pos);
-                    panic!("FINISHED...");
-                    // let value = process_string_value(pair, input, value_chunks)?;
+                    let mut result_string: Vec<_> = substitutions.into_iter().map(|s| StringPart::Substitution(s)).collect();
+                    result_string.extend(parse_string_parts(next, input)?);
+                    return Ok(Value::String(result_string));
                 },
                 Rule::array => {
-                    let array_value = parse_arrays(next, input)?;
-                    let mut result_array: Vec<_> = subs.into_iter().map(|s| ArrayPart::Substitution(s)).collect();
-                    result_array.extend(array_value);
-
+                    let mut result_array: Vec<_> = substitutions.into_iter().map(|s| ArrayPart::Substitution(s)).collect();
+                    result_array.extend(parse_arrays(next, input)?);
                     return Ok(Value::Array(result_array));
                 },
+                Rule::object => {
+                    unimplemented!("");
+                },
                 _ => {
-                    unimplemented!("not yet implemented")
+                    unreachable!("substitution, string, array or object expected");
                 },
             }
         } else {
-            if subs.len() == 1 {
-                return Ok(Value::Substitution(subs.remove(0)));
+            if substitutions.len() == 1 {
+                return Ok(Value::Substitution(substitutions.remove(0)));
             } else {
-                let parts = subs.into_iter().map(|v| StringPart::Substitution(v)).collect();
+                let parts = substitutions.into_iter().map(|v| StringPart::Substitution(v)).collect();
                 return Ok(Value::String(parts));
             }
         }
@@ -461,17 +489,6 @@ fn parse_object_body(body: Pair<Rule>) -> Result<Object, BoxError> {
     Ok(result)
 }
 
-fn process_string(string: Pair<Rule>) -> Result<String, BoxError> {
-    let position = string.as_span().start_pos().line_col();
-    let mut inners = string.into_inner();
-    if let Some(inner) = inners.next() {
-        // TODO(zolkko): unescape the value
-        Ok(inner.as_str().to_owned())
-    } else {
-        Err(format!("a string must have a content, pos {:?}", position).into())
-    }
-}
-
 fn process_field_paths(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
     let position = pair.as_span().start_pos().line_col();
     let mut content = pair.into_inner();
@@ -493,108 +510,6 @@ fn process_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
         }
     }
     Ok(path)
-}
-
-/// A hocon string may contain a substitution, so we have to split the string into
-/// parts.
-fn process_string_value(current_pair: Pair<Rule>, mut input: Pairs<Rule>, string_repr: &str) -> Result<Value, BoxError> {
-    let offset = current_pair.as_span().start();
-
-    let mut string_parts: Vec<StringPart> = Vec::new();
-    let mut result = String::new();
-
-    // There could be multiple unquoted strings followed one another,
-    // this variable holds the position of the first unquoted string in the sequence.
-    let mut unquoted_seq: Option<(usize, usize)> = None;
-    let mut last_substitution_end: Option<usize> = None;
-
-    {
-        let position = current_pair.as_span().start_pos().line_col();
-
-        match current_pair.as_rule() {
-            Rule::unquoted_string => {
-                let span = current_pair.as_span();
-                unquoted_seq = Some((span.start(), span.end()))
-            },
-            Rule::string | Rule::mstring => {
-                result += &process_string(current_pair)?;
-            },
-            _ => {
-                return Err(format!("quoted or unquoted string value is expected, pos {:?}", position).into());
-            },
-        }
-    }
-
-    while let Some(pair) = input.next() {
-        let position = pair.as_span().start_pos().line_col();
-
-        match pair.as_rule() {
-            Rule::unquoted_string => {
-                unquoted_seq = match unquoted_seq {
-                    Some((s, e)) => Some((s, pair.as_span().end())),
-                    None => {
-                        let span = pair.as_span();
-                        Some((span.start(), span.end()))
-                    }
-                };
-            },
-            Rule::string | Rule::mstring => {
-                last_substitution_end = None;
-                if let Some((s, e)) = unquoted_seq {
-                    result += &string_repr[(s - offset)..(e - offset)];
-                    unquoted_seq = None;
-                }
-                result += &process_string(pair)?;
-            },
-            Rule::substitution => {
-                if let Some(inner) = pair.into_inner().next() {
-
-                    if let Some((s, e)) = unquoted_seq {
-                        let current_start = inner.as_span().start();
-                        result += &string_repr[(s - offset)..(current_start - offset)];
-                        unquoted_seq = None;
-                    }
-
-                    let span = inner.as_span();
-                    last_substitution_end = Some(span.end());
-
-                    let position = span.start_pos().line_col();
-
-                    string_parts.push(StringPart::String(result));
-                    string_parts.push(match inner.as_rule() {
-                        Rule::required_substitution => {
-                            let key_path = process_field_paths(inner)?;
-                            StringPart::Substitution(Substitution::Required(key_path))
-                        },
-                        Rule::optional_substitution => {
-                            let key_path = process_field_paths(inner)?;
-                            StringPart::Substitution(Substitution::Optional(key_path))
-                        },
-                        _ => {
-                            return Err(format!("expected optional or required substitution, pos {:?}", position).into())
-                        },
-                    });
-                    result = String::new();
-                } else {
-                    return Err(format!("expected optional or required substitution, pos {:?}", position).into())
-                }
-            },
-            _ => {
-                return Err(format!("cannot concatenate the value, expected string, pos {:?}", position).into());
-            },
-        }
-    }
-
-    if let Some((s, e)) = unquoted_seq {
-        let part = string_repr[(s - offset)..(e - offset)].to_owned();
-        string_parts.push(StringPart::String(part));
-    }
-
-    if !result.is_empty() {
-        string_parts.push(StringPart::String(result));
-    }
-
-    Ok(Value::String(string_parts))
 }
 
 fn parse_include(include: Pair<Rule>) -> Result<Include, BoxError> {
@@ -679,6 +594,7 @@ mod tests {
 
     use super::*;
 
+
     #[test]
     fn test_parse_array() {
         let array_ast = AstParser::parse(Rule::array, r#"[1,2,3]"#).unwrap().next().unwrap();
@@ -690,8 +606,12 @@ mod tests {
     fn test_parse_string_value() {
         let string_value_examples = [
             (
-                r#"string value"#,
-                Value::String(vec![StringPart::String("string value".to_owned())]),
+                r#"string value  "sub-string" second"#,
+                Value::String(vec![
+                    StringPart::String("string value".to_owned()),
+                    StringPart::String("sub-string".to_owned()),
+                    StringPart::String("second".to_owned()),
+                ]),
             ),
             (
                 r#""quoted string value""#,
@@ -700,13 +620,16 @@ mod tests {
             (
                 r#""first string" " second string""#,
                 Value::String(vec![
-                    StringPart::String("first string second string".to_owned()),
+                    StringPart::String("first string".to_owned()),
+                    StringPart::String(" second string".to_owned()),
                 ]),
             ),
             (
                 r#""first string " 123 " second string""#,
                 Value::String(vec![
-                    StringPart::String("first string 123 second string".to_owned()),
+                    StringPart::String("first string ".to_owned()),
+                    StringPart::String("123".to_owned()),
+                    StringPart::String(" second string".to_owned()),
                 ]),
             ),
             (
@@ -720,8 +643,18 @@ mod tests {
             (
                 r#"123 " first string " ${variable1} " second string""#,
                 Value::String(vec![
-                    StringPart::String("123 first string ".to_owned()),
+                    StringPart::String("123".to_owned()),
+                    StringPart::String(" first string ".to_owned()),
                     StringPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
+                    StringPart::String(" second string".to_owned()),
+                ]),
+            ),
+            (
+                r#"some string  " first string " ${variable2} " second string""#,
+                Value::String(vec![
+                    StringPart::String("some string".to_owned()),
+                    StringPart::String(" first string ".to_owned()),
+                    StringPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                     StringPart::String(" second string".to_owned()),
                 ]),
             ),
@@ -729,16 +662,27 @@ mod tests {
                 r#"${variable1} " first string " ${variable2} " second string""#,
                 Value::String(vec![
                     StringPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
-                    StringPart::String("123 first string ".to_owned()),
+                    StringPart::String(" first string ".to_owned()),
                     StringPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                     StringPart::String(" second string".to_owned()),
+                ]),
+            ),
+            (
+                r#"${variable1} ${variable2}  first string " second string " ${variable3}  third string"#,
+                Value::String(vec![
+                    StringPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
+                    StringPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
+                    StringPart::String("first string".to_owned()),
+                    StringPart::String(" second string ".to_owned()),
+                    StringPart::Substitution(Substitution::Required(vec!["variable3".to_owned()])),
+                    StringPart::String("third string".to_owned()),
                 ]),
             ),
         ];
 
         for (example_input, expected_str_value) in string_value_examples.iter() {
             let value_ast = AstParser::parse(Rule::value, example_input).unwrap().next().unwrap();
-            let string_value = parse_value(value_ast).expect("must parse array");
+            let string_value = parse_value(value_ast).expect("cannot parse the string");
             assert_eq!(&string_value, expected_str_value);
         }
     }
