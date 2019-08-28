@@ -53,6 +53,14 @@ pub(crate) enum ArrayPart {
     Substitution(Substitution),
 }
 
+/// An object may consists of one or more objects and substitution expressions,
+/// that later are merged into a resolved object.
+#[derive(PartialEq, Clone, Debug)]
+pub(crate) enum ObjectPart {
+    Object(Object),
+    Substitution(Substitution),
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub(crate) enum Value {
     Null,
@@ -61,7 +69,7 @@ pub(crate) enum Value {
     Float(f64),
     String(Vec<StringPart>),
     Array(Vec<ArrayPart>),
-    Object(Object),
+    Object(Vec<ObjectPart>),
     Substitution(Substitution),
 }
 
@@ -76,16 +84,16 @@ pub(crate) enum FieldOp {
 pub(crate) struct Object(HashMap<String, Value>);
 
 impl Object {
-    fn append(&mut self, field: FieldOp) {
+    fn append(&mut self, field: FieldOp) -> Result<(), BoxError> {
         match field {
             FieldOp::Assign(path, value) => {
-
+                self.assign_value(&path, value)
             },
             FieldOp::Append(path, value) => {
-
+                unimplemented!();
             },
             FieldOp::Incl(include) => {
-
+                unimplemented!("must resolve and parse the include and merge it into the object");
             },
         }
     }
@@ -94,23 +102,28 @@ impl Object {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
                 self.0.insert(key.clone(), value);
-                Ok(())
             } else {
-                if let Some(Value::Object(sub_obj)) = self.0.get_mut(key.as_str()) {
-                    sub_obj.assign_value(tail, value)
+                if let Some(Value::Object(object_parts)) = self.0.get_mut(key.as_str()) {
+                    if let Some((ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
+                        let _ = last_object.assign_value(tail, value)?;
+                    } else {
+                        let mut last_object = Object::default();
+                        let _ = last_object.assign_value(tail, value)?;
+                        object_parts.push(ObjectPart::Object(last_object));
+                    }
                 } else {
                     let mut sub_obj = Object::default();
                     let () = sub_obj.assign_value(tail, value)?;
-                    self.0.insert(key.clone(), Value::Object(sub_obj));
-                    Ok(())
+                    self.0.insert(key.clone(), Value::Object(vec![ObjectPart::Object(sub_obj)]));
                 }
             }
+            Ok(())
         } else {
             Err("empty path".into())
         }
     }
 
-    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), Box<dyn Error>> {
+    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), BoxError> {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
                 if let Some(existing_value) = self.0.get_mut(key) {
@@ -138,14 +151,21 @@ impl Object {
                     Ok(())
                 }
             } else {
+                /*
                 if !self.0.contains_key(key.as_str()) {
                     self.0.insert(key.clone(), Value::Object(Object::default()));
                 }
-                if let Some(Value::Object(sub_obj)) = self.0.get_mut(key.as_str()) {
-                    sub_obj.append_value(tail, value)
+
+                if let Some(Value::Object(object_parts)) = self.0.get_mut(key.as_str()) {
+                    if let Some(( ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
+                        object_parts.append_value(tail, value)
+                    } else {
+                    }
                 } else {
                     Err("invalid path type".into())
                 }
+                */
+                unimplemented!();
             }
         } else {
             Err("empty path".into())
@@ -153,6 +173,8 @@ impl Object {
     }
 
     fn merge_object(&mut self, second: &Object) {
+        unimplemented!();
+        /*
         for (k, v) in second.0.iter() {
             if let Value::Object(ref from) = v {
                 if let Some(Value::Object(to)) = self.0.get_mut(k.as_str()) {
@@ -164,6 +186,7 @@ impl Object {
                 self.0.insert(k.clone(), v.clone());
             }
         }
+        */
     }
 }
 
@@ -207,10 +230,12 @@ impl AstParser {
                 parse_arrays(pair, pairs).map(|v| Value::Array(v))
             },
             Rule::object => {
-                parse_object(pair).map(|v| Value::Object(v))
+                unimplemented!()
+                // parse_object(pair).map(|v| Value::Object(v))
             },
             Rule::object_body => {
-                parse_object_body(pair).map(|v| Value::Object(v))
+                unimplemented!()
+                // parse_object_body(pair).map(|v| Value::Object(v))
             },
             _ => {
                 unreachable!("root grammar rule does not correspond to processing logic")
@@ -251,11 +276,11 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
             Rule::unquoted_string | Rule::string | Rule::mstring => {
                 parse_string_parts(pair, input).map(|v| Value::String(v))
             },
+            Rule::object => {
+                parse_object_parts(pair, input).map(|v| Value::Object(v))
+            },
             Rule::array => {
                 parse_arrays(pair, input).map(|v| Value::Array(v))
-            },
-            Rule::object => {
-                parse_object(pair).map(|obj| Value::Object(obj))
             },
             Rule::substitution => {
                 parse_substitutions(pair, input)
@@ -423,6 +448,19 @@ fn parse_substitution(pair: Pair<Rule>) -> Result<Substitution, BoxError> {
     }
 }
 
+fn parse_object_parts(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Vec<ObjectPart>, BoxError> {
+    let mut object_parts = vec![ObjectPart::Object(parse_object(current_pair)?)];
+    for pair in input {
+        let part = match pair.as_rule() {
+            Rule::object => ObjectPart::Object(parse_object(pair)?),
+            Rule::substitution => ObjectPart::Substitution(parse_substitution(pair)?),
+            _ => unreachable!("grammar rule definitions do not correspond to the source code"),
+        };
+        object_parts.push(part);
+    }
+    Ok(object_parts)
+}
+
 fn parse_object(object: Pair<Rule>) -> Result<Object, BoxError> {
     match object.into_inner().next() {
         Some(body) => parse_object_body(body),
@@ -449,19 +487,19 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
                 } else {
                     Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
                 }
-            }
+            },
             Rule::field_assign => {
                 if let Some(value_pair) = content.next() {
                     parse_value(value_pair).map(|value| FieldOp::Assign(path, value))
                 } else {
                     Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
                 }
-            }
+            },
             Rule::object => {
-                let obj = parse_object(pair)?;
-                Ok(FieldOp::Assign(path, Value::Object(obj)))
-            }
-            _ => unreachable!()
+                let object = parse_object(pair)?;
+                Ok(FieldOp::Assign(path, Value::Object(vec![ObjectPart::Object(object)])))
+            },
+            _ => unreachable!(),
         }
     } else {
         Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
@@ -471,13 +509,12 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
 /// If an object has a body it must contain at least one field or an include directive.
 fn parse_object_body(body: Pair<Rule>) -> Result<Object, BoxError> {
     let mut result = Object::default();
-    let content = body.into_inner();
-    for pair in content {
+    for pair in body.into_inner() {
         let position = pair.as_span().start_pos().line_col();
         match pair.as_rule() {
             Rule::field => {
                 let field = parse_field(pair)?;
-                result.append(field);
+                let _ = result.append(field)?;
             },
             Rule::include => {
                 let incl = parse_include(pair)?;
@@ -736,9 +773,65 @@ mod tests {
         ];
 
         for (example, expected) in examples.iter() {
-            let value_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
-            let array_value = parse_value(value_ast).expect("must parse array");
+            let array_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
+            let array_value = parse_value(array_ast).expect("cannot parse array");
             assert_eq!(&array_value, expected);
+        }
+    }
+
+    macro_rules! hash_map {
+        ( $( $x:expr => $y:expr ),* ) => {
+            {
+                let mut map = std::collections::HashMap::new();
+                $(
+                    map.insert($x, $y);
+                )*
+                map
+            }
+        };
+    }
+
+    #[test]
+    fn test_object_value() {
+        let examples = vec![
+            (
+                r#"{ field1: 1 }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Integer(1)
+                    ]))
+                ]),
+            ),
+            (
+                r#"{ field1: 1 } { field2: 2 }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Integer(1)
+                    ])),
+                    ObjectPart::Object(Object(hash_map![
+                        "field2".to_owned() => Value::Integer(2)
+                    ])),
+                ]),
+            ),
+            (
+                r#"{ field1: 1 } ${variable1} { field2: 2 } ${variable2}"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Integer(1)
+                    ])),
+                    ObjectPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
+                    ObjectPart::Object(Object(hash_map![
+                        "field2".to_owned() => Value::Integer(2)
+                    ])),
+                    ObjectPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
+                ]),
+            ),
+        ];
+
+        for (example, expected) in examples {
+            let object_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
+            let object_value = parse_value(object_ast).expect("cannot parse object");
+            assert_eq!(object_value, expected);
         }
     }
 
