@@ -405,7 +405,9 @@ fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Resu
                     return Ok(Value::Array(result_array));
                 },
                 Rule::object => {
-                    unimplemented!("");
+                    let mut result_object: Vec<_> = substitutions.into_iter().map(|s| ObjectPart::Substitution(s)).collect();
+                    result_object.extend(parse_object_parts(next, input)?);
+                    return Ok(Value::Object(result_object));
                 },
                 _ => {
                     unreachable!("substitution, string, array or object expected");
@@ -815,6 +817,20 @@ mod tests {
                         "field2".to_owned() => Value::Integer(2)
                     ])),
                     ObjectPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
+                ]),
+            ),
+            (
+                r#"{ field1 = ${variable1} ${variable2} { field2: 1 } }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Object(vec![
+                            ObjectPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
+                            ObjectPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
+                            ObjectPart::Object(Object(hash_map![
+                                "field2".to_owned() => Value::Integer(1)
+                            ])),
+                        ])
+                    ]))
                 ]),
             ),
         ];
