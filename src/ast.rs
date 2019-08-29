@@ -848,6 +848,18 @@ mod tests {
                     ]))
                 ]),
             ),
+            (
+                r#"{ field1 = ${variable}, field1 += 2, field1 += 3 }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Array(vec![
+                            ArrayPart::Substitution(Substitution::Required(vec!["variable".to_owned()])),
+                            ArrayPart::Array(Array(vec![Value::Integer(2)])),
+                            ArrayPart::Array(Array(vec![Value::Integer(3)])),
+                        ])
+                    ]))
+                ]),
+            ),
         ];
 
         for (example, expected) in examples {
