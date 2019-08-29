@@ -70,7 +70,7 @@ pub(crate) enum Value {
     String(Vec<StringPart>),
     Array(Vec<ArrayPart>),
     Object(Vec<ObjectPart>),
-    Substitution(Substitution),
+    Substitution(Vec<Substitution>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -132,11 +132,9 @@ impl Object {
                             array.push(ArrayPart::Array(Array(vec![value])));
                             Ok(())
                         },
-                        Value::Substitution(sub) => {
-                            let parts = vec![
-                                ArrayPart::Substitution(sub.clone()),
-                                ArrayPart::Array(Array(vec![value])),
-                            ];
+                        Value::Substitution(subsitutions) => {
+                            let mut parts: Vec<_> = subsitutions.iter().cloned().map(|v| ArrayPart::Substitution(v)).collect();
+                            parts.push(ArrayPart::Array(Array(vec![value])));
                             self.0.insert(key.clone(), Value::Array(parts));
                             Ok(())
                         },
@@ -414,12 +412,7 @@ fn parse_substitutions(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Resu
                 },
             }
         } else {
-            if substitutions.len() == 1 {
-                return Ok(Value::Substitution(substitutions.remove(0)));
-            } else {
-                let parts = substitutions.into_iter().map(|v| StringPart::Substitution(v)).collect();
-                return Ok(Value::String(parts));
-            }
+            return Ok(Value::Substitution(substitutions));
         }
     }
 }
@@ -854,6 +847,19 @@ mod tests {
                     ObjectPart::Object(Object(hash_map![
                         "field1".to_owned() => Value::Array(vec![
                             ArrayPart::Substitution(Substitution::Required(vec!["variable".to_owned()])),
+                            ArrayPart::Array(Array(vec![Value::Integer(2)])),
+                            ArrayPart::Array(Array(vec![Value::Integer(3)])),
+                        ])
+                    ]))
+                ]),
+            ),
+            (
+                r#"{ field1 = ${variable1} ${variable2}, field1 += 2, field1 += 3 }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Array(vec![
+                            ArrayPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
+                            ArrayPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                             ArrayPart::Array(Array(vec![Value::Integer(2)])),
                             ArrayPart::Array(Array(vec![Value::Integer(3)])),
                         ])
