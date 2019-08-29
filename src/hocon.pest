@@ -72,7 +72,7 @@ array = { "[" ~ NEWLINE* ~ value ~ (separator ~ value)* ~ (separator)? ~ "]" | "
 
 // Field name and paths.
 path_delimiter   = _{ "." }
-field_name       = @{ (!("\"" | ":" | "=" | "+=" | "{" | "}" | "[" | "]" | "," | "." | NEWLINE | "#" | "//") ~ ANY)+ }
+field_name       = @{ (!("\"" | ":" | "=" | "+=" | "{" | "}" | "[" | "]" | "," | "." | NEWLINE | WHITESPACE | "#" | "//") ~ ANY)+ }
 field_path       = { (string | field_name) ~ (path_delimiter ~ (string | field_name))* }
 
 field_assign     = @{ "=" | ":" }

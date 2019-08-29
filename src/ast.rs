@@ -90,7 +90,7 @@ impl Object {
                 self.assign_value(&path, value)
             },
             FieldOp::Append(path, value) => {
-                unimplemented!();
+                self.append_value(&path, value)
             },
             FieldOp::Incl(include) => {
                 unimplemented!("must resolve and parse the include and merge it into the object");
@@ -129,11 +129,7 @@ impl Object {
                 if let Some(existing_value) = self.0.get_mut(key) {
                     match existing_value {
                         Value::Array(array) => {
-                            if let Some((ArrayPart::Array(last), _)) = array.split_last_mut() {
-                                last.0.push(value);
-                            } else {
-                                array.push(ArrayPart::Array(Array(vec![value])));
-                            }
+                            array.push(ArrayPart::Array(Array(vec![value])));
                             Ok(())
                         },
                         Value::Substitution(sub) => {
@@ -147,7 +143,9 @@ impl Object {
                         _ => Err("incompatible type".into()),
                     }
                 } else {
-                    self.0.insert(key.clone(), value);
+                    // if an element is not exist then we create a new array which
+                    // consists of a single element
+                    self.0.insert(key.clone(), Value::Array(vec![ArrayPart::Array(Array(vec![value]))]));
                     Ok(())
                 }
             } else {
@@ -824,6 +822,30 @@ mod tests {
                         "field2".to_owned() => Value::Integer(2)
                     ])),
                     ObjectPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
+                ]),
+            ),
+        ];
+
+        for (example, expected) in examples {
+            let object_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
+            let object_value = parse_value(object_ast).expect("cannot parse object");
+            assert_eq!(object_value, expected);
+        }
+    }
+
+    #[test]
+    fn test_object_append_value() {
+        let examples = vec![
+            (
+                r#"{ field1 += 1, field1 += 2, field1 += 3 }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Array(vec![
+                            ArrayPart::Array(Array(vec![Value::Integer(1)])),
+                            ArrayPart::Array(Array(vec![Value::Integer(2)])),
+                            ArrayPart::Array(Array(vec![Value::Integer(3)])),
+                        ])
+                    ]))
                 ]),
             ),
         ];
