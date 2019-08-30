@@ -86,38 +86,36 @@ pub(crate) struct Object(HashMap<String, Value>);
 impl Object {
     fn append(&mut self, field: FieldOp) -> Result<(), BoxError> {
         match field {
-            FieldOp::Assign(path, value) => {
-                self.assign_value(&path, value)
-            },
-            FieldOp::Append(path, value) => {
-                self.append_value(&path, value)
-            },
+            FieldOp::Assign(path, value) => self.assign_value(&path, value),
+            FieldOp::Append(path, value) => self.append_value(&path, value),
             FieldOp::Incl(include) => {
                 unimplemented!("must resolve and parse the include and merge it into the object");
             },
         }
     }
 
-    fn assign_value(&mut self, path: &[String], value: Value) -> Result<(), Box<dyn Error>> {
+    fn assign_value(&mut self, path: &[String], value: Value) -> Result<(), BoxError> {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
                 self.0.insert(key.clone(), value);
+                Ok(())
             } else {
                 if let Some(Value::Object(object_parts)) = self.0.get_mut(key.as_str()) {
                     if let Some((ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
-                        let _ = last_object.assign_value(tail, value)?;
+                        last_object.assign_value(tail, value)
                     } else {
                         let mut last_object = Object::default();
                         let _ = last_object.assign_value(tail, value)?;
                         object_parts.push(ObjectPart::Object(last_object));
+                        Ok(())
                     }
                 } else {
                     let mut sub_obj = Object::default();
-                    let () = sub_obj.assign_value(tail, value)?;
+                    let _ = sub_obj.assign_value(tail, value)?;
                     self.0.insert(key.clone(), Value::Object(vec![ObjectPart::Object(sub_obj)]));
+                    Ok(())
                 }
             }
-            Ok(())
         } else {
             Err("empty path".into())
         }
@@ -147,42 +145,29 @@ impl Object {
                     Ok(())
                 }
             } else {
-                /*
-                if !self.0.contains_key(key.as_str()) {
-                    self.0.insert(key.clone(), Value::Object(Object::default()));
+                match self.0.get_mut(key.as_str()) {
+                    Some(Value::Object(object_parts)) => {
+                        if let Some((ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
+                            last_object.append_value(tail, value)
+                        } else {
+                            let mut object = Object::default();
+                            let _ = object.append_value(tail, value)?;
+                            object_parts.push(ObjectPart::Object(object));
+                            Ok(())
+                        }
+                    },
+                    None => {
+                        let mut object = Object::default();
+                        let _ = object.append_value(tail, value)?;
+                        self.0.insert(key.clone(), Value::Object(vec![ObjectPart::Object(object)]));
+                        Ok(())
+                    },
+                    _ => Err("invalid path type".into()),
                 }
-
-                if let Some(Value::Object(object_parts)) = self.0.get_mut(key.as_str()) {
-                    if let Some(( ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
-                        object_parts.append_value(tail, value)
-                    } else {
-                    }
-                } else {
-                    Err("invalid path type".into())
-                }
-                */
-                unimplemented!();
             }
         } else {
             Err("empty path".into())
         }
-    }
-
-    fn merge_object(&mut self, second: &Object) {
-        unimplemented!();
-        /*
-        for (k, v) in second.0.iter() {
-            if let Value::Object(ref from) = v {
-                if let Some(Value::Object(to)) = self.0.get_mut(k.as_str()) {
-                    to.merge_object(from);
-                } else {
-                    self.0.insert(k.clone(), v.clone());
-                }
-            } else {
-                self.0.insert(k.clone(), v.clone());
-            }
-        }
-        */
     }
 }
 
@@ -833,18 +818,6 @@ mod tests {
                     ]))
                 ]),
             ),
-        ];
-
-        for (example, expected) in examples {
-            let object_ast = AstParser::parse(Rule::value, example).unwrap().next().unwrap();
-            let object_value = parse_value(object_ast).expect("cannot parse object");
-            assert_eq!(object_value, expected);
-        }
-    }
-
-    #[test]
-    fn test_object_append_value() {
-        let examples = vec![
             (
                 r#"{ field1 += 1, field1 += 2, field1 += 3 }"#,
                 Value::Object(vec![
@@ -878,6 +851,22 @@ mod tests {
                             ArrayPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                             ArrayPart::Array(Array(vec![Value::Integer(2)])),
                             ArrayPart::Array(Array(vec![Value::Integer(3)])),
+                        ])
+                    ]))
+                ]),
+            ),
+            (
+                r#"{ field1.field2 += 1, field1.field2 += 2, field1.field2 += 3 }"#,
+                Value::Object(vec![
+                    ObjectPart::Object(Object(hash_map![
+                        "field1".to_owned() => Value::Object(vec![
+                            ObjectPart::Object(Object(hash_map![
+                                "field2".to_owned() => Value::Array(vec![
+                                    ArrayPart::Array(Array(vec![Value::Integer(1)])),
+                                    ArrayPart::Array(Array(vec![Value::Integer(2)])),
+                                    ArrayPart::Array(Array(vec![Value::Integer(3)])),
+                                ])
+                            ]))
                         ])
                     ]))
                 ]),
