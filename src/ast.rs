@@ -306,7 +306,7 @@ fn unescape_string(string: &str) -> String {
 }
 
 /// The function handles a single or multi quoted string
-fn process_string(string: Pair<Rule>) -> Result<String, BoxError> {
+fn parse_string(string: Pair<Rule>) -> Result<String, BoxError> {
     let position = string.as_span().start_pos().line_col();
     let mut inners = string.into_inner();
     if let Some(inner) = inners.next() {
@@ -327,7 +327,7 @@ fn parse_string_parts(pair: Pair<Rule>, pairs: Pairs<Rule>) -> Result<Vec<String
             result.push(StringPart::Substitution(parse_substitution(pair)?));
         },
         Rule::string | Rule::mstring => {
-            result.push(StringPart::String(process_string(pair)?));
+            result.push(StringPart::String(parse_string(pair)?));
         },
         Rule::unquoted_string => {
             last = Some(pair.as_str().to_owned());
@@ -349,7 +349,7 @@ fn parse_string_parts(pair: Pair<Rule>, pairs: Pairs<Rule>) -> Result<Vec<String
                 if let Some(l) = last.take() {
                     result.push(StringPart::String(unescape_string(l.trim_end())));
                 }
-                result.push(StringPart::String(process_string(pair)?))
+                result.push(StringPart::String(parse_string(pair)?))
             },
             Rule::unquoted_string => {
                 if let Some(l) = last.take() {
@@ -409,12 +409,12 @@ fn parse_substitution(pair: Pair<Rule>) -> Result<Substitution, BoxError> {
     if let Some(inner) = pair.into_inner().next() {
         match inner.as_rule() {
             Rule::required_substitution => {
-                let key_path = process_field_paths(inner)?;
+                let key_path = parse_field_paths(inner)?;
                 Ok(Substitution::Required(key_path))
 
             },
             Rule::optional_substitution => {
-                let key_path = process_field_paths(inner)?;
+                let key_path = parse_field_paths(inner)?;
                 Ok(Substitution::Optional(key_path))
             },
             _ => {
@@ -451,7 +451,7 @@ fn parse_field(field: Pair<Rule>) -> Result<FieldOp, BoxError> {
     let mut content = field.into_inner();
 
     let path = if let Some(field_path) = content.next() {
-        process_field_path(field_path)?
+        parse_field_path(field_path)?
     } else {
         return Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into());
     };
@@ -504,23 +504,23 @@ fn parse_object_body(body: Pair<Rule>) -> Result<Object, BoxError> {
     Ok(result)
 }
 
-fn process_field_paths(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
+fn parse_field_paths(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
     let position = pair.as_span().start_pos().line_col();
     let mut content = pair.into_inner();
 
     if let Some(field_path) = content.next() {
-        process_field_path(field_path)
+        parse_field_path(field_path)
     } else {
         Err(format!("field grammar rule does not correspond to extraction logic, pos {:?}", position).into())
     }
 }
 
-fn process_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
+fn parse_field_path(pair: Pair<Rule>) -> Result<Vec<String>, BoxError> {
     let mut path = Vec::new();
     for key in pair.into_inner() {
         match key.as_rule() {
             Rule::field_name => path.push(key.as_str().to_owned()),
-            Rule::string => path.push(process_string(key)?),
+            Rule::string => path.push(parse_string(key)?),
             _ => unreachable!()
         }
     }
@@ -557,7 +557,7 @@ fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
         Rule::include_file => {
             let maybe_string = include_kind.into_inner().next();
             if let Some(string) = maybe_string {
-                let value = process_string(string)?;
+                let value = parse_string(string)?;
                 Ok(IncludePath::File(value))
             } else {
                 Err(format!("include file() directive must contain a single-quoted string, pos {:?}", position).into())
@@ -566,7 +566,7 @@ fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
         Rule::include_url => {
             let maybe_string = include_kind.into_inner().next();
             if let Some(string) = maybe_string {
-                let value = process_string(string)?;
+                let value = parse_string(string)?;
                 Ok(IncludePath::Url(value))
             } else {
                 Err(format!("include url() directive must contain a single-quoted string, pos {:?}", position).into())
@@ -575,7 +575,7 @@ fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
         Rule::include_classpath => {
             let maybe_string = include_kind.into_inner().next();
             if let Some(string) = maybe_string {
-                let value = process_string(string)?;
+                let value = parse_string(string)?;
                 Ok(IncludePath::Classpath(value))
             } else {
                 Err(format!("include classpath() directive must contain a single-quoted string, pos {:?}", position).into())
@@ -584,7 +584,7 @@ fn parse_include_path(pair: Pair<Rule>) -> Result<IncludePath, BoxError> {
         Rule::include_string => {
             let maybe_string = include_kind.into_inner().next();
             if let Some(string) = maybe_string {
-                let value = process_string(string)?;
+                let value = parse_string(string)?;
                 Ok(IncludePath::SingleQuoted(value))
             } else {
                 Err(format!("single-quoted include directive must contain a single-quoted string, pos {:?}", position).into())
@@ -936,7 +936,7 @@ mod tests {
 
         for (input, expected) in examples.iter() {
             let field_path_pair = AstParser::parse(Rule::field_path, input).unwrap().next().unwrap();
-            let res = process_field_path(field_path_pair).expect(format!("failed to parse {}", input).as_ref());
+            let res = parse_field_path(field_path_pair).expect(format!("failed to parse {}", input).as_ref());
             assert_eq!(&res, expected);
         }
     }
