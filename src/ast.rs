@@ -81,7 +81,9 @@ pub(crate) enum FieldOp {
 }
 
 #[derive(Default, PartialEq, Clone, Debug)]
-pub(crate) struct Object(HashMap<String, Value>);
+pub(crate) struct Object {
+    fields: HashMap<String, Value>,
+}
 
 impl Object {
     fn append(&mut self, field: FieldOp) -> Result<(), BoxError> {
@@ -97,10 +99,10 @@ impl Object {
     fn assign_value(&mut self, path: &[String], value: Value) -> Result<(), BoxError> {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
-                self.0.insert(key.clone(), value);
+                self.fields.insert(key.clone(), value);
                 Ok(())
             } else {
-                if let Some(Value::Object(object_parts)) = self.0.get_mut(key.as_str()) {
+                if let Some(Value::Object(object_parts)) = self.fields.get_mut(key.as_str()) {
                     if let Some((ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
                         last_object.assign_value(tail, value)
                     } else {
@@ -112,7 +114,7 @@ impl Object {
                 } else {
                     let mut sub_obj = Object::default();
                     let _ = sub_obj.assign_value(tail, value)?;
-                    self.0.insert(key.clone(), Value::Object(vec![ObjectPart::Object(sub_obj)]));
+                    self.fields.insert(key.clone(), Value::Object(vec![ObjectPart::Object(sub_obj)]));
                     Ok(())
                 }
             }
@@ -124,7 +126,7 @@ impl Object {
     fn append_value(&mut self, path: &[String], value: Value) -> Result<(), BoxError> {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
-                if let Some(existing_value) = self.0.get_mut(key) {
+                if let Some(existing_value) = self.fields.get_mut(key) {
                     match existing_value {
                         Value::Array(array) => {
                             array.push(ArrayPart::Array(Array(vec![value])));
@@ -133,7 +135,7 @@ impl Object {
                         Value::Substitution(subsitutions) => {
                             let mut parts: Vec<_> = subsitutions.iter().cloned().map(|v| ArrayPart::Substitution(v)).collect();
                             parts.push(ArrayPart::Array(Array(vec![value])));
-                            self.0.insert(key.clone(), Value::Array(parts));
+                            self.fields.insert(key.clone(), Value::Array(parts));
                             Ok(())
                         },
                         _ => Err("incompatible type".into()),
@@ -141,11 +143,11 @@ impl Object {
                 } else {
                     // if an element is not exist then we create a new array which
                     // consists of a single element
-                    self.0.insert(key.clone(), Value::Array(vec![ArrayPart::Array(Array(vec![value]))]));
+                    self.fields.insert(key.clone(), Value::Array(vec![ArrayPart::Array(Array(vec![value]))]));
                     Ok(())
                 }
             } else {
-                match self.0.get_mut(key.as_str()) {
+                match self.fields.get_mut(key.as_str()) {
                     Some(Value::Object(object_parts)) => {
                         if let Some((ObjectPart::Object(last_object), _)) = object_parts.split_last_mut() {
                             last_object.append_value(tail, value)
@@ -159,7 +161,7 @@ impl Object {
                     None => {
                         let mut object = Object::default();
                         let _ = object.append_value(tail, value)?;
-                        self.0.insert(key.clone(), Value::Object(vec![ObjectPart::Object(object)]));
+                        self.fields.insert(key.clone(), Value::Object(vec![ObjectPart::Object(object)]));
                         Ok(())
                     },
                     _ => Err("invalid path type".into()),
@@ -757,14 +759,14 @@ mod tests {
         }
     }
 
-    macro_rules! hash_map {
-        ( $( $x:expr => $y:expr ),* ) => {
+    macro_rules! object {
+        ( $($x:expr => $y:expr),* ) => {
             {
-                let mut map = std::collections::HashMap::new();
+                let mut fields = std::collections::HashMap::new();
                 $(
-                    map.insert($x, $y);
+                    fields.insert($x, $y);
                 )*
-                map
+                Object { fields }
             }
         };
     }
@@ -775,100 +777,100 @@ mod tests {
             (
                 r#"{ field1: 1 }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Integer(1)
-                    ]))
+                    ])
                 ]),
             ),
             (
                 r#"{ field1: 1 } { field2: 2 }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Integer(1)
-                    ])),
-                    ObjectPart::Object(Object(hash_map![
+                    ]),
+                    ObjectPart::Object(object![
                         "field2".to_owned() => Value::Integer(2)
-                    ])),
+                    ]),
                 ]),
             ),
             (
                 r#"{ field1: 1 } ${variable1} { field2: 2 } ${variable2}"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Integer(1)
-                    ])),
+                    ]),
                     ObjectPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field2".to_owned() => Value::Integer(2)
-                    ])),
+                    ]),
                     ObjectPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                 ]),
             ),
             (
                 r#"{ field1 = ${variable1} ${variable2} { field2: 1 } }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Object(vec![
                             ObjectPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
                             ObjectPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
-                            ObjectPart::Object(Object(hash_map![
+                            ObjectPart::Object(object![
                                 "field2".to_owned() => Value::Integer(1)
-                            ])),
+                            ]),
                         ])
-                    ]))
+                    ])
                 ]),
             ),
             (
                 r#"{ field1 += 1, field1 += 2, field1 += 3 }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Array(vec![
                             ArrayPart::Array(Array(vec![Value::Integer(1)])),
                             ArrayPart::Array(Array(vec![Value::Integer(2)])),
                             ArrayPart::Array(Array(vec![Value::Integer(3)])),
                         ])
-                    ]))
+                    ])
                 ]),
             ),
             (
                 r#"{ field1 = ${variable}, field1 += 2, field1 += 3 }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Array(vec![
                             ArrayPart::Substitution(Substitution::Required(vec!["variable".to_owned()])),
                             ArrayPart::Array(Array(vec![Value::Integer(2)])),
                             ArrayPart::Array(Array(vec![Value::Integer(3)])),
                         ])
-                    ]))
+                    ])
                 ]),
             ),
             (
                 r#"{ field1 = ${variable1} ${variable2}, field1 += 2, field1 += 3 }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Array(vec![
                             ArrayPart::Substitution(Substitution::Required(vec!["variable1".to_owned()])),
                             ArrayPart::Substitution(Substitution::Required(vec!["variable2".to_owned()])),
                             ArrayPart::Array(Array(vec![Value::Integer(2)])),
                             ArrayPart::Array(Array(vec![Value::Integer(3)])),
                         ])
-                    ]))
+                    ])
                 ]),
             ),
             (
                 r#"{ field1.field2 += 1, field1.field2 += 2, field1.field2 += 3 }"#,
                 Value::Object(vec![
-                    ObjectPart::Object(Object(hash_map![
+                    ObjectPart::Object(object![
                         "field1".to_owned() => Value::Object(vec![
-                            ObjectPart::Object(Object(hash_map![
+                            ObjectPart::Object(object![
                                 "field2".to_owned() => Value::Array(vec![
                                     ArrayPart::Array(Array(vec![Value::Integer(1)])),
                                     ArrayPart::Array(Array(vec![Value::Integer(2)])),
                                     ArrayPart::Array(Array(vec![Value::Integer(3)])),
                                 ])
-                            ]))
+                            ])
                         ])
-                    ]))
+                    ])
                 ]),
             ),
         ];
