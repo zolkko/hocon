@@ -91,7 +91,13 @@ impl Object {
             FieldOp::Assign(path, value) => self.assign_value(&path, value),
             FieldOp::Append(path, value) => self.append_value(&path, value),
             FieldOp::Incl(include) => {
-                unimplemented!("must resolve and parse the include and merge it into the object");
+                match include {
+                    Include::Required(path) => {
+                    },
+                    Include::NonRequired(path) => {
+
+                    },
+                }
             },
         }
     }
@@ -182,10 +188,15 @@ impl Array {
     }
 }
 
+/// Type of handler function which must return content of a file/url to include.
+/// The first argument is a type of a resource to include and the second is a path or url.
+pub(crate) type IncludeHandler = for<'a> fn (Include) -> Result<Option<Object>, BoxError>;
+
 /// Parser object
 #[derive(Parser)]
 #[grammar = "hocon.pest"]
 pub(crate) struct AstParser {
+    include_handler: Option<IncludeHandler>
 }
 
 impl Default for AstParser {
@@ -196,7 +207,11 @@ impl Default for AstParser {
 
 impl AstParser {
     pub fn new() -> Self {
-        AstParser { }
+        AstParser { include_handler: None }
+    }
+
+    pub fn with_handler(f: IncludeHandler) -> Self {
+        AstParser { include_handler: Some(f) }
     }
 
     /// Parses a string slice into owned hocon object.
@@ -210,15 +225,13 @@ impl AstParser {
 
         match pair.as_rule() {
             Rule::array => {
-                parse_arrays(pair, pairs).map(|v| Value::Array(v))
+                parse_array(pair).map(|v| Value::Array(vec![ArrayPart::Array(v)]))
             },
             Rule::object => {
-                unimplemented!()
-                // parse_object(pair).map(|v| Value::Object(v))
+                parse_object(pair).map(|v| Value::Object(vec![ObjectPart::Object(v)]))
             },
             Rule::object_body => {
-                unimplemented!()
-                // parse_object_body(pair).map(|v| Value::Object(v))
+                parse_object_body(pair).map(|v| Value::Object(vec![ObjectPart::Object(v)]))
             },
             _ => {
                 unreachable!("root grammar rule does not correspond to processing logic")
@@ -295,8 +308,7 @@ fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
     let mut result: Array = Array::default();
     let array_values = array.into_inner();
     for array_item in array_values {
-        let value = parse_value(array_item)?;
-        result.append(value);
+        result.append(parse_value(array_item)?);
     }
     Ok(result)
 }
