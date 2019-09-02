@@ -86,19 +86,46 @@ pub(crate) struct Object {
 }
 
 impl Object {
-    fn append(&mut self, field: FieldOp) -> Result<(), BoxError> {
+    fn append(&mut self, field: FieldOp, mih: &Option<IncludeHandler>) -> Result<(), BoxError> {
         match field {
             FieldOp::Assign(path, value) => self.assign_value(&path, value),
             FieldOp::Append(path, value) => self.append_value(&path, value),
             FieldOp::Incl(include) => {
                 match include {
                     Include::Required(path) => {
+                        match mih {
+                            Some(ih) => {
+                                let object = ih(path);
+                                // TODO: merge current object and new object
+                                Ok(())
+                            },
+                            None => {
+                                Err("you must provide a handler to load includes".into())
+                            },
+                        }
                     },
                     Include::NonRequired(path) => {
-
+                        if let Some(object) = mih.map(|h| h(path)) {
+                            // TODO: merge this object and new
+                        }
+                        Ok(())
                     },
                 }
             },
+        }
+    }
+
+    fn merge_object(&mut self, second: &Object) {
+        for (k, v) in second {
+            if let Value::Object(from) = v {
+                if let Some(Value::Object(to)) = self.get_mut(k) {
+                    to.merge_object(from);
+                } else {
+                    self.insert(k.to_owned(), v.clone());
+                }
+            } else {
+                self.insert(k.to_owned(), v.clone());
+            }
         }
     }
 
@@ -190,7 +217,7 @@ impl Array {
 
 /// Type of handler function which must return content of a file/url to include.
 /// The first argument is a type of a resource to include and the second is a path or url.
-pub(crate) type IncludeHandler = for<'a> fn (Include) -> Result<Option<Object>, BoxError>;
+pub(crate) type IncludeHandler = for<'a> fn (IncludePath) -> Result<Option<Object>, BoxError>;
 
 /// Parser object
 #[derive(Parser)]
@@ -207,7 +234,7 @@ impl Default for AstParser {
 
 impl AstParser {
     pub fn new() -> Self {
-        AstParser { include_handler: None }
+        AstParser::default()
     }
 
     pub fn with_handler(f: IncludeHandler) -> Self {
@@ -506,11 +533,11 @@ fn parse_object_body(body: Pair<Rule>) -> Result<Object, BoxError> {
         match pair.as_rule() {
             Rule::field => {
                 let field = parse_field(pair)?;
-                let _ = result.append(field)?;
+                let _ = result.append(field, &None)?;
             },
             Rule::include => {
                 let incl = parse_include(pair)?;
-                result.append(FieldOp::Incl(incl));
+                result.append(FieldOp::Incl(incl), &None);
             },
             _ => unreachable!()
         }
