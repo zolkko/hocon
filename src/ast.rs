@@ -83,9 +83,11 @@ pub(crate) enum FieldOp {
 #[derive(Default, PartialEq, Clone, Debug)]
 pub(crate) struct Object {
     fields: HashMap<String, Value>,
+    path: Option<Path>,
 }
 
 impl Object {
+
     fn append(&mut self, field: FieldOp, mih: &Option<IncludeHandler>) -> Result<(), BoxError> {
         match field {
             FieldOp::Assign(path, value) => self.assign_value(&path, value),
@@ -96,7 +98,7 @@ impl Object {
                         match mih {
                             Some(ih) => {
                                 match ih(path)? {
-                                    Some(object) => self.merge_object(object),
+                                    Some(object) => self.merge_object(self.fixup_substitution(object)),
                                     None => Err("the include require an object".into()),
                                 }
                             },
@@ -108,7 +110,7 @@ impl Object {
                     Include::NonRequired(path) => {
                         if let Some(ih) = mih {
                             if let Some(object) = ih(path)? {
-                                self.merge_object(object)
+                                self.merge_object(self.fixup_substitution(object))
                             } else {
                                 Ok(())
                             }
@@ -119,13 +121,6 @@ impl Object {
                 }
             },
         }
-    }
-
-    fn merge_object(&mut self, second: Object) -> Result<(), BoxError> {
-        for (k, v) in second.fields {
-            let _ = self.assign_value(&[k], v)?;
-        }
-        Ok(())
     }
 
     fn assign_value(&mut self, path: &[String], value: Value) -> Result<(), BoxError> {
@@ -202,6 +197,20 @@ impl Object {
         } else {
             Err("empty path".into())
         }
+    }
+
+    fn fixup_substitution(&self, object: Object) -> Object {
+        match &self.path {
+            Some(p) => object,
+            None => object,
+        }
+    }
+
+    fn merge_object(&mut self, second: Object) -> Result<(), BoxError> {
+        for (k, v) in second.fields {
+            let _ = self.assign_value(&[k], v)?;
+        }
+        Ok(())
     }
 }
 
@@ -804,7 +813,7 @@ mod tests {
                 $(
                     fields.insert($x, $y);
                 )*
-                Object { fields }
+                Object { fields, path: None }
             }
         };
     }
