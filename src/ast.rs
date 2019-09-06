@@ -95,9 +95,10 @@ impl Object {
                     Include::Required(path) => {
                         match mih {
                             Some(ih) => {
-                                let object = ih(path);
-                                // TODO: merge current object and new object
-                                Ok(())
+                                match ih(path)? {
+                                    Some(object) => self.merge_object(object),
+                                    None => Err("the include require an object".into()),
+                                }
                             },
                             None => {
                                 Err("you must provide a handler to load includes".into())
@@ -105,28 +106,26 @@ impl Object {
                         }
                     },
                     Include::NonRequired(path) => {
-                        if let Some(object) = mih.map(|h| h(path)) {
-                            // TODO: merge this object and new
+                        if let Some(ih) = mih {
+                            if let Some(object) = ih(path)? {
+                                self.merge_object(object)
+                            } else {
+                                Ok(())
+                            }
+                        } else {
+                            Ok(())
                         }
-                        Ok(())
                     },
                 }
             },
         }
     }
 
-    fn merge_object(&mut self, second: &Object) {
-        for (k, v) in second {
-            if let Value::Object(from) = v {
-                if let Some(Value::Object(to)) = self.get_mut(k) {
-                    to.merge_object(from);
-                } else {
-                    self.insert(k.to_owned(), v.clone());
-                }
-            } else {
-                self.insert(k.to_owned(), v.clone());
-            }
+    fn merge_object(&mut self, second: Object) -> Result<(), BoxError> {
+        for (k, v) in second.fields {
+            let _ = self.assign_value(&[k], v)?;
         }
+        Ok(())
     }
 
     fn assign_value(&mut self, path: &[String], value: Value) -> Result<(), BoxError> {
