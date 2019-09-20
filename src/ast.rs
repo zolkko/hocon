@@ -260,7 +260,7 @@ impl AstParser {
 
         match pair.as_rule() {
             Rule::array => {
-                parse_array(pair).map(|v| Value::Array(vec![ArrayPart::Array(v)]))
+                parse_array(Some(Vec::new()), pair).map(|v| Value::Array(vec![ArrayPart::Array(v)]))
             },
             Rule::object => {
                 parse_object(pair).map(|v| Value::Object(vec![ObjectPart::Object(v)]))
@@ -339,7 +339,7 @@ fn parse_arrays(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Vec<
     Ok(array_parts)
 }
 
-fn parse_array(array: Pair<Rule>) -> Result<Array, BoxError> {
+fn parse_array(ctx: Option<Path>, array: Pair<Rule>) -> Result<Array, BoxError> {
     let mut result: Array = Array::default();
     let array_values = array.into_inner();
     for array_item in array_values {
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn test_parse_array() {
         let array_ast = AstParser::parse(Rule::array, r#"[1,2,3]"#).unwrap().next().unwrap();
-        let array = parse_array(array_ast).expect("must parse array");
+        let array = parse_array(None, array_ast).expect("must parse array");
         assert_eq!(array, Array(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]));
     }
 
