@@ -327,10 +327,10 @@ fn parse_value(value: Pair<Rule>) -> Result<Value, BoxError> {
 
 /// An array value may consists of
 fn parse_arrays(current_pair: Pair<Rule>, mut input: Pairs<Rule>) -> Result<Vec<ArrayPart>, BoxError> {
-    let mut array_parts = vec![ArrayPart::Array(parse_array(current_pair)?)];
+    let mut array_parts = vec![ArrayPart::Array(parse_array(None, current_pair)?)];
     for pair in input {
         let part = match pair.as_rule() {
-            Rule::array => ArrayPart::Array(parse_array(pair)?),
+            Rule::array => ArrayPart::Array(parse_array(None, pair)?),
             Rule::substitution => ArrayPart::Substitution(parse_substitution(pair)?),
             _ => unreachable!("grammar rule definitions do not correspond to the source code"),
         };
