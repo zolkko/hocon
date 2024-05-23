@@ -112,12 +112,10 @@ fn fold_values(mut values: Vec<ast::Value>) -> Result<Value, Error> {
             let merged_string = values.into_iter().map(value_to_string).collect::<Result<String, _>>()?;
             Ok(Value::String(merged_string))
         }
+    } else if let Some(value) = values.pop() {
+        convert_value(value)
     } else {
-        if let Some(value) = values.pop() {
-            convert_value(value)
-        } else {
-            Ok(Value::Null)
-        }
+        Ok(Value::Null)
     }
 }
 
@@ -128,9 +126,9 @@ fn convert_values(values: Vec<ast::Value>) -> Result<Vec<Value>, Error> {
 fn convert_value(value: ast::Value) -> Result<Value, Error> {
     let res = match value {
         ast::Value::Null => Value::Null,
-        ast::Value::Bool(val) => Value::Bool(val.clone()),
-        ast::Value::Integer(val) => Value::Integer(val.clone()),
-        ast::Value::Float(val) => Value::Float(val.clone()),
+        ast::Value::Bool(val) => Value::Bool(val),
+        ast::Value::Integer(val) => Value::Integer(val),
+        ast::Value::Float(val) => Value::Float(val),
         ast::Value::String(val) => Value::String(val.to_string()),
         ast::Value::Array(val) => {
             let array = val.into_iter().map(fold_values).collect::<Result<Array, Error>>()?;
@@ -159,7 +157,7 @@ fn value_to_string(value: Value) -> Result<String, Error> {
         Value::Bool(val) => val.to_string(),
         Value::Integer(val) => val.to_string(),
         Value::Float(val) => val.to_string(),
-        Value::String(val) => val.into(),
+        Value::String(val) => val,
         Value::Array(array) => array_to_string(array)?,
         Value::Object(object) => object_to_string(object)?,
     })
@@ -203,7 +201,7 @@ fn cast_values_to_objects(values: Vec<Value>) -> impl IntoIterator<Item = Object
 }
 
 fn merge_objects(objects: impl IntoIterator<Item = Object>) -> Object {
-    objects.into_iter().map(|x| x.into_iter()).flatten().collect()
+    objects.into_iter().flat_map(|x| x.into_iter()).collect()
 }
 
 fn cast_values_to_arrays(values: Vec<Value>) -> impl IntoIterator<Item = Array> {

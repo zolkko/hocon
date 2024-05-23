@@ -39,7 +39,7 @@ impl<'de> de::Visitor<'de> for ValueVisitor {
     }
 
     fn visit_f64<E: de::Error>(self, f: f64) -> Result<Value, E> {
-        Ok(Value::Float(f.into()))
+        Ok(Value::Float(f))
     }
 
     fn visit_str<E: de::Error>(self, s: &str) -> Result<Value, E> {

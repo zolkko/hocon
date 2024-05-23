@@ -55,14 +55,12 @@ impl ObjectOps for Object {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
                 self.insert(key.to_owned(), value);
+            } else if let Some(Value::Object(sub_obj)) = self.get_mut(key.as_str()) {
+                sub_obj.assign_value(tail, value);
             } else {
-                if let Some(Value::Object(sub_obj)) = self.get_mut(key.as_str()) {
-                    sub_obj.assign_value(tail, value);
-                } else {
-                    let mut sub_obj = Object::default();
-                    sub_obj.assign_value(tail, value);
-                    self.insert(key.to_owned(), Value::Object(sub_obj));
-                }
+                let mut sub_obj = Object::default();
+                sub_obj.assign_value(tail, value);
+                self.insert(key.to_owned(), Value::Object(sub_obj));
             }
         }
     }

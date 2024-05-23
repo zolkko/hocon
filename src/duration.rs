@@ -1,3 +1,4 @@
+#![allow(unused)]
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::character::complete::{space0, u64 as parse_u64};

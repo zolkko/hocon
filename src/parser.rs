@@ -208,7 +208,7 @@ fn value_chunks(input: &str) -> IResult<&str, Vec<Value<'_>>> {
 /// ```
 fn value_chunk(input: &str) -> IResult<&str, Value> {
     let number = map_res(recognize_float::<&str, _>, |x| {
-        if x.contains(".") {
+        if x.contains('.') {
             str::parse(x).map(Value::Float).map_err(|err| format!("failed to parse double: {err}"))
         } else {
             str::parse(x).map(Value::Integer).map_err(|err| format!("failed to parse int: {err}"))
