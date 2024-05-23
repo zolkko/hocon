@@ -14,6 +14,25 @@ pub enum Value {
     Object(Object),
 }
 
+impl<T> std::ops::Index<T> for Value
+where
+    T: AsRef<str>,
+{
+    type Output = Value;
+
+    fn index(&self, index: T) -> &Self::Output {
+        if let Value::Object(ref object) = self {
+            let key = index.as_ref();
+            let Some(value) = object.get(key) else {
+                panic!("key {key} does not exist in HOCON object");
+            };
+            value
+        } else {
+            panic!("hocon object expected");
+        }
+    }
+}
+
 /// The default value is `Value::Null`.
 impl Default for Value {
     fn default() -> Self {
