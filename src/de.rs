@@ -39,7 +39,7 @@ impl<'de> de::Visitor<'de> for ValueVisitor {
     }
 
     fn visit_f64<E: de::Error>(self, f: f64) -> Result<Value, E> {
-        Ok(Value::Float(f))
+        Ok(Value::Real(f))
     }
 
     fn visit_str<E: de::Error>(self, s: &str) -> Result<Value, E> {
@@ -103,10 +103,11 @@ impl<'de> de::Deserializer<'de> for Value {
                     visitor.visit_u64(v as u64)
                 }
             }
-            Value::Float(v) => visitor.visit_f64(v),
+            Value::Real(v) => visitor.visit_f64(v),
             Value::String(v) => visitor.visit_string(v),
             Value::Array(v) => visit_array(v, visitor),
             Value::Object(v) => visit_object(v, visitor),
+            Value::BadValue(_) => Err(self.invalid_type(&visitor)),
         }
     }
 
@@ -182,7 +183,7 @@ impl<'de> de::Deserializer<'de> for Value {
 
     fn deserialize_f32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
-            Value::Float(v) => visitor.visit_f32(v as f32),
+            Value::Real(v) => visitor.visit_f32(v as f32),
             Value::Integer(v) => visitor.visit_f32(v as f32),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -190,7 +191,7 @@ impl<'de> de::Deserializer<'de> for Value {
 
     fn deserialize_f64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
-            Value::Float(v) => visitor.visit_f64(v),
+            Value::Real(v) => visitor.visit_f64(v),
             Value::Integer(v) => visitor.visit_f64(v as f64),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -307,10 +308,11 @@ impl Value {
                     de::Unexpected::Unsigned(n as u64)
                 }
             }
-            Value::Float(n) => de::Unexpected::Float(n),
+            Value::Real(n) => de::Unexpected::Float(n),
             Value::String(ref s) => de::Unexpected::Str(s),
             Value::Array(_) => de::Unexpected::Seq,
             Value::Object(_) => de::Unexpected::Map,
+            Value::BadValue(_) => de::Unexpected::Other("BadValue"),
         }
     }
 }
@@ -696,7 +698,7 @@ mod tests {
 
     #[test]
     fn value_f32() {
-        let v: f32 = from_value(Value::Float(123.0)).expect("must deserialize hocon::Value::Float into f32");
+        let v: f32 = from_value(Value::Real(123.0)).expect("must deserialize hocon::Value::Float into f32");
         assert_eq!(v, 123.0);
 
         let v: f32 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into f32");
@@ -708,7 +710,7 @@ mod tests {
 
     #[test]
     fn value_f64() {
-        let v: f64 = from_value(Value::Float(123.0)).expect("must deserialize hocon::Value::Float into f64");
+        let v: f64 = from_value(Value::Real(123.0)).expect("must deserialize hocon::Value::Float into f64");
         assert_eq!(v, 123.0);
 
         let v: f64 = from_value(Value::Integer(123)).expect("must deserialize hocon::Value::Integer into f64");

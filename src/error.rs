@@ -5,7 +5,7 @@ use std::num::{ParseFloatError, ParseIntError};
 
 pub type Error = HoconError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Position {
     line: usize,
     column: usize,
@@ -17,16 +17,17 @@ impl fmt::Display for Position {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 enum ErrorKind {
     Message(String),
     Grammar(Position, &'static str),
     IntError(Position, ParseIntError),
     FloatError(Position, ParseFloatError),
     AppendError(Position, AppendError),
+    KeyDoesNotExist,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HoconError {
     kind: ErrorKind,
 }
@@ -41,6 +42,10 @@ impl HoconError {
     pub fn string(s: String) -> Self {
         HoconError { kind: ErrorKind::Message(s) }
     }
+
+    pub(crate) const fn key_does_not_exist() -> Self {
+        Self { kind: ErrorKind::KeyDoesNotExist }
+    }
 }
 
 impl fmt::Display for HoconError {
@@ -51,6 +56,7 @@ impl fmt::Display for HoconError {
             ErrorKind::IntError(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::FloatError(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::AppendError(ref pos, ref error) => write!(f, "{} {}", pos, error),
+            ErrorKind::KeyDoesNotExist => write!(f, "key does not exist"),
         }
     }
 }

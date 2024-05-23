@@ -128,7 +128,7 @@ fn convert_value(value: ast::Value) -> Result<Value, Error> {
         ast::Value::Null => Value::Null,
         ast::Value::Bool(val) => Value::Bool(val),
         ast::Value::Integer(val) => Value::Integer(val),
-        ast::Value::Float(val) => Value::Float(val),
+        ast::Value::Float(val) => Value::Real(val),
         ast::Value::String(val) => Value::String(val.to_string()),
         ast::Value::Array(val) => {
             let array = val.into_iter().map(fold_values).collect::<Result<Array, Error>>()?;
@@ -156,10 +156,11 @@ fn value_to_string(value: Value) -> Result<String, Error> {
         Value::Null => "".to_string(),
         Value::Bool(val) => val.to_string(),
         Value::Integer(val) => val.to_string(),
-        Value::Float(val) => val.to_string(),
+        Value::Real(val) => val.to_string(),
         Value::String(val) => val,
         Value::Array(array) => array_to_string(array)?,
         Value::Object(object) => object_to_string(object)?,
+        Value::BadValue(err) => err.to_string(),
     })
 }
 

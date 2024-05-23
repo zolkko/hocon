@@ -2,16 +2,20 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
+
+static KEY_DOES_NOT_EXIST: Value = Value::BadValue(crate::error::Error::key_does_not_exist());
+
 /// Represents any valid HOCON value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
     Bool(bool),
     Integer(isize),
-    Float(f64),
+    Real(f64),
     String(String),
     Array(Array),
     Object(Object),
+    BadValue(crate::error::Error)
 }
 
 impl<T> std::ops::Index<T> for Value
@@ -24,11 +28,11 @@ where
         if let Value::Object(ref object) = self {
             let key = index.as_ref();
             let Some(value) = object.get(key) else {
-                panic!("key {key} does not exist in HOCON object");
+                return &KEY_DOES_NOT_EXIST;
             };
             value
         } else {
-            panic!("hocon object expected");
+            &KEY_DOES_NOT_EXIST
         }
     }
 }
@@ -134,7 +138,7 @@ impl ObjectOps for Object {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 enum AppendErrorKind {
     EmptyPath,
     InvalidPathType,
@@ -142,7 +146,7 @@ enum AppendErrorKind {
 }
 
 /// Hocon format allows to append a value to an array through `+=` operator.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppendError {
     kind: AppendErrorKind,
 }
