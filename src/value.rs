@@ -1,6 +1,6 @@
-use std::fmt;
-use std::error::Error;
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 
 /// Represents any valid HOCON value.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,7 +16,9 @@ pub enum Value {
 
 /// The default value is `Value::Null`.
 impl Default for Value {
-    fn default() -> Self { Value::Null }
+    fn default() -> Self {
+        Value::Null
+    }
 }
 
 /// Owned hocon array.
@@ -28,7 +30,6 @@ pub type Object = HashMap<String, Value>;
 /// Hocon format allows a user to either assign (`=`, `:`) a value to a field or
 /// append (`+=`) a value to an array.
 pub trait ObjectOps {
-
     /// Assigns a value to a field, defined by the `path`.
     ///
     /// If a field or any intermediate objects do not exist, they will be created.
@@ -50,26 +51,22 @@ pub trait ObjectOps {
 }
 
 impl ObjectOps for Object {
-
     fn assign_value(&mut self, path: &[String], value: Value) {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
                 self.insert(key.to_owned(), value);
+            } else if let Some(Value::Object(sub_obj)) = self.get_mut(key.as_str()) {
+                sub_obj.assign_value(tail, value);
             } else {
-                if let Some(Value::Object(sub_obj)) = self.get_mut(key.as_str()) {
-                    sub_obj.assign_value(tail, value);
-                } else {
-                    let mut sub_obj = Object::default();
-                    sub_obj.assign_value(tail, value);
-                    self.insert(key.to_owned(), Value::Object(sub_obj));
-                }
+                let mut sub_obj = Object::default();
+                sub_obj.assign_value(tail, value);
+                self.insert(key.to_owned(), Value::Object(sub_obj));
             }
         }
     }
 
     fn append_value(&mut self, path: &[String], value: Value) -> Result<(), AppendError> {
         if let Some((key, tail)) = path.split_first() {
-
             if tail.is_empty() {
                 if let Some(maybe_array) = self.get_mut(key) {
                     match maybe_array {
@@ -77,14 +74,15 @@ impl ObjectOps for Object {
                             array.push(value);
                             Ok(())
                         }
-                        _ => Err(AppendError { kind: AppendErrorKind::IncompatibleType })
+                        _ => Err(AppendError {
+                            kind: AppendErrorKind::IncompatibleType,
+                        }),
                     }
                 } else {
                     self.insert(key.to_owned(), Value::Array(vec![value]));
                     Ok(())
                 }
             } else {
-
                 if !self.contains_key(key.as_str()) {
                     self.insert(key.to_owned(), Value::Object(Object::default()));
                 }
@@ -92,7 +90,9 @@ impl ObjectOps for Object {
                 if let Some(Value::Object(sub_obj)) = self.get_mut(key.as_str()) {
                     sub_obj.append_value(tail, value)
                 } else {
-                    Err(AppendError { kind: AppendErrorKind::InvalidPathType })
+                    Err(AppendError {
+                        kind: AppendErrorKind::InvalidPathType,
+                    })
                 }
             }
         } else {
@@ -119,27 +119,26 @@ impl ObjectOps for Object {
 enum AppendErrorKind {
     EmptyPath,
     InvalidPathType,
-    IncompatibleType
+    IncompatibleType,
 }
 
 /// Hocon format allows to append a value to an array through `+=` operator.
 #[derive(Debug)]
 pub struct AppendError {
-    kind: AppendErrorKind
+    kind: AppendErrorKind,
 }
 
 impl fmt::Display for AppendError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.kind {
-            AppendErrorKind::EmptyPath => f.write_str("append's path must be non-empty"),
+            AppendErrorKind::EmptyPath => f.write_str("appended path must be non-empty"),
             AppendErrorKind::InvalidPathType => f.write_str(""),
             AppendErrorKind::IncompatibleType => f.write_str("cannot append a value to a non-array field"),
         }
     }
 }
 
-impl Error for AppendError { }
-
+impl Error for AppendError {}
 
 #[cfg(test)]
 mod tests {
