@@ -1,7 +1,7 @@
 use crate::error::Error;
+use crate::parser::root;
 use crate::value::Value;
 use serde::de::DeserializeOwned;
-use crate::parser::root;
 
 mod ast;
 mod de;

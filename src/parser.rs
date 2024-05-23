@@ -105,12 +105,7 @@ fn path_delimiter(input: &str) -> IResult<&str, char> {
 /// ```
 fn separator(input: &str) -> IResult<&str, ()> {
     let comma = value((), pair(char(','), empty_lines));
-    let prefix_comma = value((), tuple((
-        line_ending,
-        empty_lines,
-        opt(char(',')),
-        empty_lines,
-    )));
+    let prefix_comma = value((), tuple((line_ending, empty_lines, opt(char(',')), empty_lines)));
     preceded(space0, alt((comma, prefix_comma)))(input)
 }
 
@@ -120,18 +115,8 @@ fn separator(input: &str) -> IResult<&str, ()> {
 /// ```
 fn array_value(input: &str) -> IResult<&str, Value> {
     let elements = opt(pair(value_chunks, terminated(many0(preceded(separator, value_chunks)), opt(separator))));
-    let elements_value = map(elements, |maybe_x| {
-        if let Some(x) = maybe_x {
-            Value::Array(combine_vec(x))
-        } else {
-            Value::Array(vec![])
-        }
-    });
-    delimited(
-        pair(char('['), empty_lines),
-        terminated(elements_value, empty_lines),
-        pair(char(']'), space0),
-    )(input)
+    let elements_value = map(elements, |maybe_x| if let Some(x) = maybe_x { Value::Array(combine_vec(x)) } else { Value::Array(vec![]) });
+    delimited(pair(char('['), empty_lines), terminated(elements_value, empty_lines), pair(char(']'), space0))(input)
 }
 
 /// ```peg
@@ -205,11 +190,7 @@ fn object(input: &str) -> IResult<&str, Object> {
         Some(o) => o,
         None => vec![],
     });
-    delimited(
-        pair(char('{'), empty_lines),
-        terminated(object_body_parser, empty_lines),
-        pair(char('}'), space0),
-    )(input)
+    delimited(pair(char('{'), empty_lines), terminated(object_body_parser, empty_lines), pair(char('}'), space0))(input)
 }
 
 fn object_value(input: &str) -> IResult<&str, Value> {
@@ -439,7 +420,8 @@ mod tests {
 
     #[test]
     fn test_parse_empty_lines() {
-        let res = empty_lines(r#"
+        let res = empty_lines(
+            r#"
 
         # comment 1
 
@@ -451,7 +433,8 @@ mod tests {
         // comment 4 and 5
 
 
-        "#);
+        "#,
+        );
 
         assert_eq!(res, Ok(("", ())));
     }
@@ -468,17 +451,9 @@ mod tests {
     #[test]
     fn test_parse_array() {
         assert_eq!(array_value("[]"), Ok(("", Value::Array(vec![]))));
-        assert_eq!(array_value("[1]"), Ok(("", Value::Array(vec![
-            vec![Value::Integer(1)]
-        ]))));
-        assert_eq!(array_value("[1,2]"), Ok(("", Value::Array(vec![
-            vec![Value::Integer(1)],
-            vec![Value::Integer(2)]
-        ]))));
-        assert_eq!(array_value("[1,2,]"), Ok(("", Value::Array(vec![
-            vec![Value::Integer(1)],
-            vec![Value::Integer(2)]
-        ]))));
+        assert_eq!(array_value("[1]"), Ok(("", Value::Array(vec![vec![Value::Integer(1)]]))));
+        assert_eq!(array_value("[1,2]"), Ok(("", Value::Array(vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]))));
+        assert_eq!(array_value("[1,2,]"), Ok(("", Value::Array(vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]))));
     }
 
     #[test]
@@ -495,55 +470,74 @@ mod tests {
 
     #[test]
     fn test_parse_value_chunks() {
-        assert_eq!(value_chunks(r#""value1" "value2" "value3""#), Ok(("", vec![
-            Value::String("value1"),
-            Value::String("value2"),
-            Value::String("value3"),
-        ])));
-        assert_eq!(value_chunks(r#""value1" "value2" "value3" "#), Ok(("", vec![
-            Value::String("value1"),
-            Value::String("value2"),
-            Value::String("value3"),
-        ])));
-        assert_eq!(value_chunks(r#""value1" "value2" "value3","#), Ok((",", vec![
-            Value::String("value1"),
-            Value::String("value2"),
-            Value::String("value3"),
-        ])));
+        assert_eq!(
+            value_chunks(r#""value1" "value2" "value3""#),
+            Ok(("", vec![Value::String("value1"), Value::String("value2"), Value::String("value3"),]))
+        );
+        assert_eq!(
+            value_chunks(r#""value1" "value2" "value3" "#),
+            Ok(("", vec![Value::String("value1"), Value::String("value2"), Value::String("value3"),]))
+        );
+        assert_eq!(
+            value_chunks(r#""value1" "value2" "value3","#),
+            Ok((",", vec![Value::String("value1"), Value::String("value2"), Value::String("value3"),]))
+        );
     }
 
     #[test]
     fn test_parse_field() {
-        assert_eq!(field("name: value"), Ok(("", Field {
-            path: vec!["name"],
-            op: FieldOp::Assign(vec![Value::String("value")]),
-        })));
+        assert_eq!(
+            field("name: value"),
+            Ok((
+                "",
+                Field {
+                    path: vec!["name"],
+                    op: FieldOp::Assign(vec![Value::String("value")]),
+                }
+            ))
+        );
 
-        assert_eq!(field("name1.name2: value"), Ok(("", Field {
-            path: vec!["name1", "name2"],
-            op: FieldOp::Assign(vec![Value::String("value")]),
-        })));
+        assert_eq!(
+            field("name1.name2: value"),
+            Ok((
+                "",
+                Field {
+                    path: vec!["name1", "name2"],
+                    op: FieldOp::Assign(vec![Value::String("value")]),
+                }
+            ))
+        );
     }
 
     #[test]
     fn test_parse_object() {
         assert_eq!(object(r#"{ }"#), Ok(("", Object::default())));
-        assert_eq!(object(r#"{ field1: 123 }"#), Ok(("", vec![
-            FieldOrInclude::Field(Field {
-                path: vec!["field1"],
-                op: FieldOp::Assign(vec![Value::Integer(123)]),
-            })
-        ])));
-        assert_eq!(object("{ field1: 123 \n field2: 321 }"), Ok(("", vec![
-            FieldOrInclude::Field(Field {
-                path: vec!["field1"],
-                op: FieldOp::Assign(vec![Value::Integer(123)]),
-            }),
-            FieldOrInclude::Field(Field {
-                path: vec!["field2"],
-                op: FieldOp::Assign(vec![Value::Integer(321)]),
-            })
-        ])));
+        assert_eq!(
+            object(r#"{ field1: 123 }"#),
+            Ok((
+                "",
+                vec![FieldOrInclude::Field(Field {
+                    path: vec!["field1"],
+                    op: FieldOp::Assign(vec![Value::Integer(123)]),
+                })]
+            ))
+        );
+        assert_eq!(
+            object("{ field1: 123 \n field2: 321 }"),
+            Ok((
+                "",
+                vec![
+                    FieldOrInclude::Field(Field {
+                        path: vec!["field1"],
+                        op: FieldOp::Assign(vec![Value::Integer(123)]),
+                    }),
+                    FieldOrInclude::Field(Field {
+                        path: vec!["field2"],
+                        op: FieldOp::Assign(vec![Value::Integer(321)]),
+                    })
+                ]
+            ))
+        );
     }
 
     #[test]
@@ -660,8 +654,9 @@ mod tests {
           akka.actor.mailbox.bounded-queue-based
       }"#;
         let (_, result) = root(input).expect("line breaks are allowed");
-        assert_eq!(result, Value::Object(vec![
-            FieldOrInclude::Field(Field {
+        assert_eq!(
+            result,
+            Value::Object(vec![FieldOrInclude::Field(Field {
                 path: vec!["requirements"],
                 op: FieldOp::Object(vec![
                     FieldOrInclude::Field(Field {
@@ -673,7 +668,7 @@ mod tests {
                         op: FieldOp::Assign(vec![Value::String("akka.actor.mailbox.bounded-queue-based")])
                     })
                 ])
-            })
-        ]));
+            })])
+        );
     }
 }

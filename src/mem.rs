@@ -5,7 +5,6 @@ use nom::combinator::{map, value};
 use nom::sequence::separated_pair;
 use nom::IResult;
 
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum MemoryUnit {
     Bytes,

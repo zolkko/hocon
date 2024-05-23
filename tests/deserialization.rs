@@ -1,7 +1,6 @@
 use serde_derive::Deserialize;
 use std::default::Default;
 
-
 #[test]
 fn deserialize_normal() {
     #[derive(PartialEq, Debug, Deserialize)]
