@@ -1,6 +1,6 @@
-use crate::error::Error;
+pub use crate::error::Error;
 use crate::parser::root;
-use crate::value::Value;
+pub use crate::value::Value;
 use serde::de::DeserializeOwned;
 
 mod ast;
