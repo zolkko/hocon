@@ -126,7 +126,7 @@ fn convert_values(values: Vec<ast::Value>) -> Result<Vec<Value>, Error> {
 fn convert_value(value: ast::Value) -> Result<Value, Error> {
     let res = match value {
         ast::Value::Null => Value::Null,
-        ast::Value::Bool(val) => Value::Bool(val),
+        ast::Value::Bool(val) => Value::Boolean(val),
         ast::Value::Integer(val) => Value::Integer(val),
         ast::Value::Float(val) => Value::Real(val),
         ast::Value::String(val) => Value::String(val.to_string()),
@@ -154,7 +154,7 @@ fn value_to_string(value: Value) -> Result<String, Error> {
 
     Ok(match value {
         Value::Null => "".to_string(),
-        Value::Bool(val) => val.to_string(),
+        Value::Boolean(val) => val.to_string(),
         Value::Integer(val) => val.to_string(),
         Value::Real(val) => val.to_string(),
         Value::String(val) => val,

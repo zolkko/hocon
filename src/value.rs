@@ -9,7 +9,7 @@ static KEY_DOES_NOT_EXIST: Value = Value::BadValue(crate::error::Error::key_does
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
-    Bool(bool),
+    Boolean(bool),
     Integer(isize),
     Real(f64),
     String(String),

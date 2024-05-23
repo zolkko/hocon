@@ -27,7 +27,7 @@ impl<'de> de::Visitor<'de> for ValueVisitor {
     }
 
     fn visit_bool<E: de::Error>(self, b: bool) -> Result<Value, E> {
-        Ok(Value::Bool(b))
+        Ok(Value::Boolean(b))
     }
 
     fn visit_i64<E: de::Error>(self, i: i64) -> Result<Value, E> {
@@ -95,7 +95,7 @@ impl<'de> de::Deserializer<'de> for Value {
     fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
             Value::Null => visitor.visit_unit(),
-            Value::Bool(v) => visitor.visit_bool(v),
+            Value::Boolean(v) => visitor.visit_bool(v),
             Value::Integer(v) => {
                 if v < std::u64::MIN as isize {
                     visitor.visit_i64(v as i64)
@@ -113,7 +113,7 @@ impl<'de> de::Deserializer<'de> for Value {
 
     fn deserialize_bool<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
-            Value::Bool(v) => visitor.visit_bool(v),
+            Value::Boolean(v) => visitor.visit_bool(v),
             Value::Integer(v) => {
                 if v == 0 {
                     visitor.visit_bool(false)
@@ -300,7 +300,7 @@ impl Value {
     fn unexpected(&self) -> de::Unexpected {
         match *self {
             Value::Null => de::Unexpected::Unit,
-            Value::Bool(b) => de::Unexpected::Bool(b),
+            Value::Boolean(b) => de::Unexpected::Bool(b),
             Value::Integer(n) => {
                 if n < -1 {
                     de::Unexpected::Signed(n as i64)
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn value_bool() {
-        let v: bool = from_value(Value::Bool(true)).expect("must deserialize hocon::Value::Bool into bool");
+        let v: bool = from_value(Value::Boolean(true)).expect("must deserialize hocon::Value::Bool into bool");
         assert_eq!(v, true);
 
         let v: bool = from_value(Value::Integer(1)).expect("must deserialize hocon::Value::Integer into bool");
