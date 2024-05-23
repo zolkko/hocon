@@ -1,10 +1,8 @@
-use std::fmt;
-
+use crate::error::HoconError;
+use crate::value::{Array, Object, Value};
 use serde::de;
 use serde::forward_to_deserialize_any;
-
-use super::*;
-
+use std::fmt;
 
 /// Interpret a `hocon::Value` as an instance of type `T`.
 ///
@@ -15,14 +13,13 @@ use super::*;
 /// is wrong with the data, for example required struct fields are missing from
 /// the Hocon object or some number is too big to fit in the expected primitive
 /// type.
-pub fn from_value<T: de::DeserializeOwned>(value: Value) -> Result<T, HoconError<Rule>> {
+pub fn from_value<T: de::DeserializeOwned>(value: Value) -> Result<T, HoconError> {
     de::Deserialize::deserialize(value)
 }
 
 struct ValueVisitor;
 
 impl<'de> de::Visitor<'de> for ValueVisitor {
-
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -93,8 +90,7 @@ impl<'de> de::Deserialize<'de> for Value {
 }
 
 impl<'de> de::Deserializer<'de> for Value {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self {
@@ -106,7 +102,7 @@ impl<'de> de::Deserializer<'de> for Value {
                 } else {
                     visitor.visit_u64(v as u64)
                 }
-            },
+            }
             Value::Float(v) => visitor.visit_f64(v),
             Value::String(v) => visitor.visit_string(v),
             Value::Array(v) => visit_array(v, visitor),
@@ -123,8 +119,8 @@ impl<'de> de::Deserializer<'de> for Value {
                 } else {
                     visitor.visit_bool(true)
                 }
-            },
-            _ => Err(self.invalid_type(&visitor))
+            }
+            _ => Err(self.invalid_type(&visitor)),
         }
     }
 
@@ -241,11 +237,11 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_unit_struct<V: de::Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+    fn deserialize_unit_struct<V: de::Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
         self.deserialize_unit(visitor)
     }
 
-    fn deserialize_newtype_struct<V: de::Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+    fn deserialize_newtype_struct<V: de::Visitor<'de>>(self, _name: &'static str, _visitor: V) -> Result<V::Value, Self::Error> {
         unimplemented!()
     }
 
@@ -256,7 +252,7 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_tuple<V: de::Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+    fn deserialize_tuple<V: de::Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error> {
         self.deserialize_seq(visitor)
     }
 
@@ -279,7 +275,7 @@ impl<'de> de::Deserializer<'de> for Value {
         }
     }
 
-    fn deserialize_enum<V: de::Visitor<'de>>(self, name: &'static str, variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
+    fn deserialize_enum<V: de::Visitor<'de>>(self, _name: &'static str, _variants: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
         visit_enum(self, visitor)
     }
 
@@ -295,7 +291,7 @@ impl<'de> de::Deserializer<'de> for Value {
 
 impl Value {
     #[cold]
-    fn invalid_type<E: de::Error>(&self, exp: &de::Expected) -> E {
+    fn invalid_type<E: de::Error>(&self, exp: &dyn de::Expected) -> E {
         de::Error::invalid_type(self.unexpected(), exp)
     }
 
@@ -310,7 +306,7 @@ impl Value {
                 } else {
                     de::Unexpected::Unsigned(n as u64)
                 }
-            },
+            }
             Value::Float(n) => de::Unexpected::Float(n),
             Value::String(ref s) => de::Unexpected::Str(s),
             Value::Array(_) => de::Unexpected::Seq,
@@ -321,15 +317,13 @@ impl Value {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-fn visit_array<'de, V: de::Visitor<'de>>(array: Array, visitor: V) -> Result<V::Value, HoconError<Rule>> {
-    let len = array.len();
+fn visit_array<'de, V: de::Visitor<'de>>(array: Array, visitor: V) -> Result<V::Value, HoconError> {
     let mut deserializer = ArrayDeserializer::new(array);
     let seq = visitor.visit_seq(&mut deserializer)?;
     let remaining = deserializer.iter.len();
     if remaining == 0 {
         Ok(seq)
     } else {
-        // TODO (zolkko): dedicated length error
         Err(HoconError::message("fewer elements in array"))
     }
 }
@@ -345,8 +339,7 @@ impl ArrayDeserializer {
 }
 
 impl<'de> de::Deserializer<'de> for ArrayDeserializer {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     #[inline]
     fn deserialize_any<V: de::Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -359,7 +352,6 @@ impl<'de> de::Deserializer<'de> for ArrayDeserializer {
             if remaining == 0 {
                 Ok(ret)
             } else {
-                // TODO (zolkko): dedicated length error
                 Err(HoconError::message("fewer elements in array"))
             }
         }
@@ -378,8 +370,7 @@ impl<'de> de::Deserializer<'de> for ArrayDeserializer {
 }
 
 impl<'de> de::SeqAccess<'de> for ArrayDeserializer {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     fn next_element_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
         match self.iter.next() {
@@ -398,8 +389,7 @@ impl<'de> de::SeqAccess<'de> for ArrayDeserializer {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-fn visit_object<'de, V: de::Visitor<'de>>(object: Object, visitor: V) -> Result<V::Value, HoconError<Rule>> {
-    let len = object.len();
+fn visit_object<'de, V: de::Visitor<'de>>(object: Object, visitor: V) -> Result<V::Value, HoconError> {
     let mut deserializer = ObjectDeserializer::new(object);
     let map = visitor.visit_map(&mut deserializer)?;
     let remaining = deserializer.iter.len();
@@ -425,15 +415,14 @@ impl ObjectDeserializer {
 }
 
 impl<'de> de::MapAccess<'de> for ObjectDeserializer {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     fn next_key_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
         match self.iter.next() {
             Some((key, value)) => {
                 self.value = Some(value);
                 seed.deserialize(Value::String(key)).map(Some)
-            },
+            }
             None => Ok(None),
         }
     }
@@ -454,8 +443,7 @@ impl<'de> de::MapAccess<'de> for ObjectDeserializer {
 }
 
 impl<'de> de::Deserializer<'de> for ObjectDeserializer {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     #[inline]
     fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
@@ -476,7 +464,7 @@ impl<'de> de::Deserializer<'de> for ObjectDeserializer {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-fn visit_enum<'de, V: de::Visitor<'de>>(v: Value, visitor: V) -> Result<V::Value, HoconError<Rule>> {
+fn visit_enum<'de, V: de::Visitor<'de>>(v: Value, visitor: V) -> Result<V::Value, HoconError> {
     let (variant, value) = match v {
         Value::Object(value) => {
             let mut iter = value.into_iter();
@@ -494,7 +482,7 @@ fn visit_enum<'de, V: de::Visitor<'de>>(v: Value, visitor: V) -> Result<V::Value
             (Value::String(variant), Some(value))
         }
         Value::String(variant) => (Value::String(variant), None),
-        other => {
+        _other => {
             return Err(HoconError::message("string or map"));
         }
     };
@@ -508,8 +496,7 @@ struct EnumDeserializer {
 }
 
 impl<'de> de::EnumAccess<'de> for EnumDeserializer {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     type Variant = VariantDeserializer;
 
@@ -524,8 +511,7 @@ struct VariantDeserializer {
 }
 
 impl<'de> de::VariantAccess<'de> for VariantDeserializer {
-
-    type Error = HoconError<Rule>;
+    type Error = HoconError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
         match self.value {
@@ -543,20 +529,14 @@ impl<'de> de::VariantAccess<'de> for VariantDeserializer {
 
     fn tuple_variant<V: de::Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
-            Some(Value::Array(v)) => {
-                de::Deserializer::deserialize_any(ArrayDeserializer::new(v), visitor)
-            }
-            Some(other) => Err(HoconError::message("tuple variant")),
-            None => Err(HoconError::message("tuple variant")),
+            Some(Value::Array(v)) => de::Deserializer::deserialize_any(ArrayDeserializer::new(v), visitor),
+            _ => Err(HoconError::message("tuple variant")),
         }
     }
 
     fn struct_variant<V: de::Visitor<'de>>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
-            Some(Value::Object(v)) => {
-                de::Deserializer::deserialize_any(ObjectDeserializer::new(v), visitor)
-            }
-            Some(other) => Err(HoconError::message("struct variant")),
+            Some(Value::Object(v)) => de::Deserializer::deserialize_any(ObjectDeserializer::new(v), visitor),
             _ => Err(HoconError::message("struct variant")),
         }
     }
@@ -568,6 +548,7 @@ impl<'de> de::VariantAccess<'de> for VariantDeserializer {
 mod tests {
 
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn value_bool() {
@@ -827,7 +808,7 @@ mod tests {
         #[derive(Deserialize, Debug, PartialEq)]
         pub struct TestStruct {
             pub field1: i32,
-            pub field2: String
+            pub field2: String,
         }
 
         let v: TestStruct = from_value(Value::Object({
@@ -835,14 +816,24 @@ mod tests {
             obj.insert("field1".to_owned(), Value::Integer(1));
             obj.insert("field2".to_owned(), Value::String("2".to_owned()));
             obj
-        })).expect("must deserialize hocon::Value::Object into TestStruct");
-        assert_eq!(v, TestStruct { field1: 1, field2: "2".to_owned() });
+        }))
+        .expect("must deserialize hocon::Value::Object into TestStruct");
+        assert_eq!(
+            v,
+            TestStruct {
+                field1: 1,
+                field2: "2".to_owned(),
+            }
+        );
 
-        let v: TestStruct = from_value(Value::Array(vec![
-            Value::Integer(1),
-            Value::String("2".to_owned())
-        ])).expect("must deserialize hocon::Value::Object into TestStruct");
-        assert_eq!(v, TestStruct { field1: 1, field2: "2".to_owned() });
+        let v: TestStruct = from_value(Value::Array(vec![Value::Integer(1), Value::String("2".to_owned())])).expect("must deserialize hocon::Value::Object into TestStruct");
+        assert_eq!(
+            v,
+            TestStruct {
+                field1: 1,
+                field2: "2".to_owned(),
+            }
+        );
 
         let v: Result<TestStruct, _> = from_value(Value::Object({
             let mut obj = Object::default();
@@ -851,9 +842,7 @@ mod tests {
         }));
         assert!(v.is_err(), "missing field field1");
 
-        let v: Result<TestStruct, _> = from_value(Value::Array(vec![
-            Value::Integer(1),
-        ]));
+        let v: Result<TestStruct, _> = from_value(Value::Array(vec![Value::Integer(1)]));
         assert!(v.is_err(), "not enough elements in the array");
     }
 
@@ -864,7 +853,7 @@ mod tests {
         #[derive(Deserialize, Debug, PartialEq)]
         pub enum TestUnit {
             One,
-            Two
+            Two,
         }
 
         let v: TestUnit = from_value(Value::String("One".to_string())).expect("must deserialize hocon::Value::String into enum");
@@ -875,14 +864,8 @@ mod tests {
 
         #[derive(Deserialize, Debug, PartialEq)]
         pub enum TestStruct {
-            One {
-                field1: i32,
-                field2: String
-            },
-            Two {
-                field1: String,
-                field2: i32
-            }
+            One { field1: i32, field2: String },
+            Two { field1: String, field2: i32 },
         }
 
         let v: TestStruct = from_value(Value::Object({
@@ -893,11 +876,15 @@ mod tests {
             let mut obj = Object::default();
             obj.insert("One".to_owned(), Value::Object(fields));
             obj
-        })).expect("must deserialize hocon::Value::String into enum");
-        assert_eq!(v, TestStruct::One {
-            field1: 1,
-            field2: "2".to_owned()
-        });
+        }))
+        .expect("must deserialize hocon::Value::String into enum");
+        assert_eq!(
+            v,
+            TestStruct::One {
+                field1: 1,
+                field2: "2".to_owned(),
+            }
+        );
 
         let v: TestStruct = from_value(Value::Object({
             let mut fields = Object::default();
@@ -907,10 +894,14 @@ mod tests {
             let mut obj = Object::default();
             obj.insert("Two".to_owned(), Value::Object(fields));
             obj
-        })).expect("must deserialize hocon::Value::String into enum");
-        assert_eq!(v, TestStruct::Two {
-            field1: "1".to_owned(),
-            field2: 2
-        });
+        }))
+        .expect("must deserialize hocon::Value::String into enum");
+        assert_eq!(
+            v,
+            TestStruct::Two {
+                field1: "1".to_owned(),
+                field2: 2,
+            }
+        );
     }
 }
