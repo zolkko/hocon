@@ -3,9 +3,9 @@ use std::error::Error;
 use std::fmt;
 
 
-static KEY_DOES_NOT_EXIST: Value = Value::BadValue(crate::error::Error::key_does_not_exist());
+static MISSING_KEY: Value = Value::BadValue(crate::error::Error::missing_key());
 
-/// Represents any valid HOCON value.
+/// Represents any HOCON value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -28,11 +28,11 @@ where
         if let Value::Object(ref object) = self {
             let key = index.as_ref();
             let Some(value) = object.get(key) else {
-                return &KEY_DOES_NOT_EXIST;
+                return &MISSING_KEY;
             };
             value
         } else {
-            &KEY_DOES_NOT_EXIST
+            &MISSING_KEY
         }
     }
 }

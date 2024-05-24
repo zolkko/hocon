@@ -43,7 +43,7 @@ impl HoconError {
         HoconError { kind: ErrorKind::Message(s) }
     }
 
-    pub(crate) const fn key_does_not_exist() -> Self {
+    pub(crate) const fn missing_key() -> Self {
         Self { kind: ErrorKind::KeyDoesNotExist }
     }
 }
