@@ -203,10 +203,7 @@ fn value_chunks(input: &str) -> IResult<&str, Vec<Value<'_>>> {
     parser(input)
 }
 
-/// ```peg
-/// value_chunk = _{ array | object | substitution | unquoted_string }
-/// ```
-fn value_chunk(input: &str) -> IResult<&str, Value> {
+fn number_value(input: &str) -> IResult<&str, Value> {
     let number = map_res(recognize_float::<&str, _>, |x| {
         if x.contains('.') {
             str::parse(x).map(Value::Float).map_err(|err| format!("failed to parse double: {err}"))
@@ -214,10 +211,18 @@ fn value_chunk(input: &str) -> IResult<&str, Value> {
             str::parse(x).map(Value::Integer).map_err(|err| format!("failed to parse int: {err}"))
         }
     });
+    let nan = value(Value::Float(f64::NAN), tag_no_case("nan"));
+    let inf = value(Value::Float(f64::INFINITY), tag_no_case("inf"));
+    let neg_inf = value(Value::Float(f64::NEG_INFINITY), tag_no_case("-inf"));
 
-    let mut elems = alt((number, boolean, null, multi_string, string, object_value, array_value, substitution, unquoted_string));
-    // terminated(elems, peek(spaced_element_end))(input)
-    // terminated(elems, pair(space0, peek(element_end)))(input)
+    alt((neg_inf, inf, nan, number))(input)
+}
+
+/// ```peg
+/// value_chunk = _{ number, boolean, null, string, array | object | substitution | unquoted_string }
+/// ```
+fn value_chunk(input: &str) -> IResult<&str, Value> {
+    let mut elems = alt((number_value, boolean, null, multi_string, string, object_value, array_value, substitution, unquoted_string));
     elems(input)
 }
 
