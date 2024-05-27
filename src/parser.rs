@@ -222,7 +222,7 @@ fn number_value(input: &str) -> IResult<&str, Value> {
 /// value_chunk = _{ number, boolean, null, string, array | object | substitution | unquoted_string }
 /// ```
 fn value_chunk(input: &str) -> IResult<&str, Value> {
-    let mut elems = alt((number_value, boolean, null, multi_string, string, object_value, array_value, substitution, unquoted_string));
+    let mut elems = alt((number_value, null, boolean, multi_string, string, object_value, array_value, substitution, unquoted_string));
     elems(input)
 }
 
@@ -387,11 +387,11 @@ fn boolean(input: &str) -> IResult<&str, Value> {
     alt((
         value(
             Value::Bool(true),
-            alt((tag_no_case("true"), tag_no_case("yes"), tag_no_case("t"), tag_no_case("y"), tag("1"))),
+            alt((tag_no_case("true"), tag_no_case("yes"), tag_no_case("on"), tag_no_case("t"), tag_no_case("y"), tag("1"))),
         ),
         value(
             Value::Bool(false),
-            alt((tag_no_case("false"), tag_no_case("no"), tag_no_case("n"), tag_no_case("f"), tag("0"))),
+            alt((tag_no_case("false"), tag_no_case("no"), tag_no_case("off"), tag_no_case("n"), tag_no_case("f"), tag("0"))),
         ),
     ))(input)
 }
@@ -674,6 +674,28 @@ mod tests {
                     })
                 ])
             })])
+        );
+    }
+
+    #[test]
+    fn parse_null_false() {
+        let input = r#"
+        field-null = null
+        field-no = n
+        "#;
+        let (_, result) = root(input).expect("line breaks are allowed");
+        assert_eq!(
+            result,
+            Value::Object(vec![
+                FieldOrInclude::Field(Field {
+                    path: vec!["field-null"],
+                    op: FieldOp::Assign(vec![Value::Null]),
+                }),
+                FieldOrInclude::Field(Field {
+                    path: vec!["field-no"],
+                    op: FieldOp::Assign(vec![Value::Bool(false)]),
+                })
+            ])
         );
     }
 }
