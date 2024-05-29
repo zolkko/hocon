@@ -61,7 +61,7 @@ pub(crate) enum Value<'a> {
     Null,
     Boolean(bool),
     Integer(isize),
-    Float(f64),
+    Real(f64),
     String(&'a str),
     Array(Array<'a>),
     Object(Object<'a>),

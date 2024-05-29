@@ -206,14 +206,14 @@ fn value_chunks(input: &str) -> IResult<&str, Vec<Value<'_>>> {
 fn number_value(input: &str) -> IResult<&str, Value> {
     let number = map_res(recognize_float::<&str, _>, |x| {
         if x.contains('.') {
-            str::parse(x).map(Value::Float).map_err(|err| format!("failed to parse double: {err}"))
+            str::parse(x).map(Value::Real).map_err(|err| format!("failed to parse double: {err}"))
         } else {
             str::parse(x).map(Value::Integer).map_err(|err| format!("failed to parse int: {err}"))
         }
     });
-    let nan = value(Value::Float(f64::NAN), tag_no_case("nan"));
-    let inf = value(Value::Float(f64::INFINITY), tag_no_case("inf"));
-    let neg_inf = value(Value::Float(f64::NEG_INFINITY), tag_no_case("-inf"));
+    let nan = value(Value::Real(f64::NAN), tag_no_case("nan"));
+    let inf = value(Value::Real(f64::INFINITY), tag_no_case("inf"));
+    let neg_inf = value(Value::Real(f64::NEG_INFINITY), tag_no_case("-inf"));
 
     alt((neg_inf, inf, nan, number))(input)
 }
@@ -465,7 +465,7 @@ mod tests {
     fn test_parse_value_chunk() {
         assert_eq!(value_chunk("true"), Ok(("", Value::Boolean(true))));
         assert_eq!(value_chunk("123"), Ok(("", Value::Integer(123))));
-        assert_eq!(value_chunk("1.23"), Ok(("", Value::Float(1.23))));
+        assert_eq!(value_chunk("1.23"), Ok(("", Value::Real(1.23))));
         assert_eq!(value_chunk("[]"), Ok(("", Value::Array(vec![]))));
         assert_eq!(value_chunk("{}"), Ok(("", Value::Object(vec![]))));
         assert_eq!(value_chunk(r#""string1""#), Ok(("", Value::String("string1"))));
