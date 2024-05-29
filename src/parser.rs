@@ -386,11 +386,11 @@ fn unicode(input: &str) -> IResult<&str, &str> {
 fn boolean(input: &str) -> IResult<&str, Value> {
     alt((
         value(
-            Value::Bool(true),
+            Value::Boolean(true),
             alt((tag_no_case("true"), tag_no_case("yes"), tag_no_case("on"), tag_no_case("t"), tag_no_case("y"), tag("1"))),
         ),
         value(
-            Value::Bool(false),
+            Value::Boolean(false),
             alt((tag_no_case("false"), tag_no_case("no"), tag_no_case("off"), tag_no_case("n"), tag_no_case("f"), tag("0"))),
         ),
     ))(input)
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_parse_value_chunk() {
-        assert_eq!(value_chunk("true"), Ok(("", Value::Bool(true))));
+        assert_eq!(value_chunk("true"), Ok(("", Value::Boolean(true))));
         assert_eq!(value_chunk("123"), Ok(("", Value::Integer(123))));
         assert_eq!(value_chunk("1.23"), Ok(("", Value::Float(1.23))));
         assert_eq!(value_chunk("[]"), Ok(("", Value::Array(vec![]))));
@@ -634,14 +634,14 @@ mod tests {
 
     #[test]
     fn test_parse_boolean() {
-        assert_eq!(boolean("True"), Ok(("", Value::Bool(true))));
-        assert_eq!(boolean("t"), Ok(("", Value::Bool(true))));
-        assert_eq!(boolean("T"), Ok(("", Value::Bool(true))));
-        assert_eq!(boolean("Yes"), Ok(("", Value::Bool(true))));
+        assert_eq!(boolean("True"), Ok(("", Value::Boolean(true))));
+        assert_eq!(boolean("t"), Ok(("", Value::Boolean(true))));
+        assert_eq!(boolean("T"), Ok(("", Value::Boolean(true))));
+        assert_eq!(boolean("Yes"), Ok(("", Value::Boolean(true))));
 
-        assert_eq!(boolean("False"), Ok(("", Value::Bool(false))));
-        assert_eq!(boolean("F"), Ok(("", Value::Bool(false))));
-        assert_eq!(boolean("No"), Ok(("", Value::Bool(false))));
+        assert_eq!(boolean("False"), Ok(("", Value::Boolean(false))));
+        assert_eq!(boolean("F"), Ok(("", Value::Boolean(false))));
+        assert_eq!(boolean("No"), Ok(("", Value::Boolean(false))));
     }
 
     #[test]
@@ -693,7 +693,7 @@ mod tests {
                 }),
                 FieldOrInclude::Field(Field {
                     path: vec!["field-no"],
-                    op: FieldOp::Assign(vec![Value::Bool(false)]),
+                    op: FieldOp::Assign(vec![Value::Boolean(false)]),
                 })
             ])
         );

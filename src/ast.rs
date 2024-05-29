@@ -59,7 +59,7 @@ pub(crate) type Array<'a> = Vec<ArrayItem<'a>>;
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum Value<'a> {
     Null,
-    Bool(bool),
+    Boolean(bool),
     Integer(isize),
     Float(f64),
     String(&'a str),
