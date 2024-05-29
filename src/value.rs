@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
-use std::fmt;
 
 
 static MISSING_KEY: Value = Value::BadValue(crate::error::Error::missing_key());
@@ -64,7 +62,7 @@ pub trait ObjectOps {
     /// If an array does not exist, it will be created.
     /// The function will return an error, if the target is not an array or
     /// intermediate fields are not objects.
-    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), AppendError>;
+    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), crate::error::AppendError>;
 
     /// According to the hocon documentation, the merge must be performed only on object.
     /// - keys and values of the second object must be added to the first object;
@@ -88,7 +86,7 @@ impl ObjectOps for Object {
         }
     }
 
-    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), AppendError> {
+    fn append_value(&mut self, path: &[String], value: Value) -> Result<(), crate::error::AppendError> {
         if let Some((key, tail)) = path.split_first() {
             if tail.is_empty() {
                 if let Some(maybe_array) = self.get_mut(key) {
@@ -97,8 +95,8 @@ impl ObjectOps for Object {
                             array.push(value);
                             Ok(())
                         }
-                        _ => Err(AppendError {
-                            kind: AppendErrorKind::IncompatibleType,
+                        _ => Err(crate::error::AppendError {
+                            kind: crate::error::AppendErrorKind::IncompatibleType,
                         }),
                     }
                 } else {
@@ -113,13 +111,13 @@ impl ObjectOps for Object {
                 if let Some(Value::Object(sub_obj)) = self.get_mut(key.as_str()) {
                     sub_obj.append_value(tail, value)
                 } else {
-                    Err(AppendError {
-                        kind: AppendErrorKind::InvalidPathType,
+                    Err(crate::error::AppendError {
+                        kind: crate::error::AppendErrorKind::InvalidPathType,
                     })
                 }
             }
         } else {
-            Err(AppendError { kind: AppendErrorKind::EmptyPath })
+            Err(crate::error::AppendError { kind: crate::error::AppendErrorKind::EmptyPath })
         }
     }
 
@@ -137,31 +135,6 @@ impl ObjectOps for Object {
         }
     }
 }
-
-#[derive(Debug, Clone, PartialEq)]
-enum AppendErrorKind {
-    EmptyPath,
-    InvalidPathType,
-    IncompatibleType,
-}
-
-/// Hocon format allows to append a value to an array through `+=` operator.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AppendError {
-    kind: AppendErrorKind,
-}
-
-impl fmt::Display for AppendError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self.kind {
-            AppendErrorKind::EmptyPath => f.write_str("appended path must be non-empty"),
-            AppendErrorKind::InvalidPathType => f.write_str(""),
-            AppendErrorKind::IncompatibleType => f.write_str("cannot append a value to a non-array field"),
-        }
-    }
-}
-
-impl Error for AppendError {}
 
 #[cfg(test)]
 mod tests {

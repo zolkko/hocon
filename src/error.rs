@@ -1,9 +1,31 @@
-use crate::value::AppendError;
 use serde::de;
 use std::fmt;
 use std::num::{ParseFloatError, ParseIntError};
 
-pub type Error = HoconError;
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum AppendErrorKind {
+    EmptyPath,
+    InvalidPathType,
+    IncompatibleType,
+}
+
+/// Hocon format allows to append a value to an array through `+=` operator.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppendError {
+    pub(crate) kind: AppendErrorKind,
+}
+
+impl fmt::Display for AppendError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self.kind {
+            AppendErrorKind::EmptyPath => f.write_str("appended path must be non-empty"),
+            AppendErrorKind::InvalidPathType => f.write_str(""),
+            AppendErrorKind::IncompatibleType => f.write_str("cannot append a value to a non-array field"),
+        }
+    }
+}
+
+impl std::error::Error for AppendError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Position {
@@ -24,31 +46,31 @@ enum ErrorKind {
     IntError(Position, ParseIntError),
     FloatError(Position, ParseFloatError),
     AppendError(Position, AppendError),
-    KeyDoesNotExist,
+    MissingKey,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HoconError {
+pub struct Error {
     kind: ErrorKind,
 }
 
-impl HoconError {
+impl Error {
     pub fn message(s: &str) -> Self {
-        HoconError {
+        Error {
             kind: ErrorKind::Message(s.to_owned()),
         }
     }
 
     pub fn string(s: String) -> Self {
-        HoconError { kind: ErrorKind::Message(s) }
+        Error { kind: ErrorKind::Message(s) }
     }
 
     pub(crate) const fn missing_key() -> Self {
-        Self { kind: ErrorKind::KeyDoesNotExist }
+        Self { kind: ErrorKind::MissingKey }
     }
 }
 
-impl fmt::Display for HoconError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.kind {
             ErrorKind::Message(ref msg) => f.write_str(msg),
@@ -56,52 +78,52 @@ impl fmt::Display for HoconError {
             ErrorKind::IntError(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::FloatError(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::AppendError(ref pos, ref error) => write!(f, "{} {}", pos, error),
-            ErrorKind::KeyDoesNotExist => write!(f, "key does not exist"),
+            ErrorKind::MissingKey => write!(f, "key does not exist"),
         }
     }
 }
 
-impl std::error::Error for HoconError {}
+impl std::error::Error for Error {}
 
-impl de::Error for HoconError {
+impl de::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        HoconError {
+        Error {
             kind: ErrorKind::Message(msg.to_string()),
         }
     }
 }
 
-impl From<((usize, usize), &'static str)> for HoconError {
+impl From<((usize, usize), &'static str)> for Error {
     fn from(value: ((usize, usize), &'static str)) -> Self {
         let ((line, column), description) = value;
-        HoconError {
+        Error {
             kind: ErrorKind::Grammar(Position { line, column }, description),
         }
     }
 }
 
-impl From<((usize, usize), ParseIntError)> for HoconError {
+impl From<((usize, usize), ParseIntError)> for Error {
     fn from(value: ((usize, usize), ParseIntError)) -> Self {
         let ((line, column), error) = value;
-        HoconError {
+        Error {
             kind: ErrorKind::IntError(Position { line, column }, error),
         }
     }
 }
 
-impl From<((usize, usize), ParseFloatError)> for HoconError {
+impl From<((usize, usize), ParseFloatError)> for Error {
     fn from(value: ((usize, usize), ParseFloatError)) -> Self {
         let ((line, column), error) = value;
-        HoconError {
+        Error {
             kind: ErrorKind::FloatError(Position { line, column }, error),
         }
     }
 }
 
-impl From<((usize, usize), AppendError)> for HoconError {
+impl From<((usize, usize), AppendError)> for Error {
     fn from(value: ((usize, usize), AppendError)) -> Self {
         let ((line, column), error) = value;
-        HoconError {
+        Error {
             kind: ErrorKind::AppendError(Position { line, column }, error),
         }
     }

@@ -1,4 +1,4 @@
-use crate::error::HoconError;
+use crate::error::Error as HoconError;
 use crate::value::{Array, Object, Value};
 use serde::de;
 use serde::forward_to_deserialize_any;
