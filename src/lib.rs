@@ -2,6 +2,7 @@ pub use crate::error::Error;
 use crate::parser::root;
 pub use crate::value::Value;
 use serde::de::DeserializeOwned;
+use crate::ast::Span;
 
 mod ast;
 mod de;
@@ -13,7 +14,7 @@ mod resolve;
 mod value;
 
 pub fn parse(input: &str) -> Result<Value, Error> {
-    let (_, ast) = root(input).map_err(|e| Error::string(format!("failed to parse input HOCON: {e}")))?;
+    let (_, ast) = root(Span::new(input)).map_err(|e| Error::string(format!("failed to parse input HOCON: {e}")))?;
     resolve::resolve(ast)
 }
 

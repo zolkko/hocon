@@ -4,15 +4,17 @@ use crate::error::Error;
 use crate::value::{Array, Object, Value};
 
 pub(crate) fn resolve(input: AstValue) -> Result<Value, Error> {
+    todo!()
+    /*
     match input {
         AstValue::Object(object) => {
             let root_object = convert_object(object)?;
             Ok(Value::Object(root_object))
         }
         _ => Err(Error::message("top level entity must be an object")),
-    }
+    }*/
 }
-
+/*
 fn convert_object(from: ast::Object) -> Result<Object, Error> {
     let mut object = Object::default();
 
@@ -220,3 +222,4 @@ fn all_objects(values: &[Value]) -> bool {
 fn all_arrays(values: &[Value]) -> bool {
     values.iter().all(|x| matches!(x, Value::Array(_)))
 }
+*/
