@@ -1,4 +1,4 @@
-use crate::ast::{Field, FieldOp, FieldOrInclude, Fields, Include, IncludePath, Object, Path, Span, Substitution, Value, ValueKind};
+use crate::ast::{Array, Field, FieldOp, FieldOrInclude, Fields, Include, IncludePath, Object, Path, Span, Substitution, Value, ValueKind};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case, take_while};
 use nom::character::complete::{anychar, char, hex_digit1, line_ending, multispace0, multispace1, space0};
@@ -123,9 +123,9 @@ fn array_value(input: Span) -> IResult<Span, Value> {
     let elements = terminated(opt(pair(value_chunks, terminated(many0(preceded(separator, value_chunks)), opt(separator)))), empty_lines);
     let elements_value = map(elements, |maybe_x| {
         if let Some(x) = maybe_x {
-            ValueKind::Array(combine_vec(x))
+            ValueKind::Array(Array::new(combine_vec(x), input))
         } else {
-            ValueKind::Array(vec![])
+            ValueKind::Array(Array::new(vec![], input))
         }
     });
     let end = pair(char(']'), space0);
@@ -487,22 +487,34 @@ mod tests {
 
     #[test]
     fn test_parse_array() {
-        assert_eq!(array_value("[]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![]), (1, 1))));
+        assert_eq!(
+            array_value("[]".into()).map(pair_span_to_position),
+            Ok(Value::new(ValueKind::Array(Array::new(vec![], (1, 1))), (1, 1)))
+        );
         assert_eq!(
             array_value("[1]".into()).map(pair_span_to_position),
-            Ok(Value::new(ValueKind::Array(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))]]), (1, 1)))
+            Ok(Value::new(
+                ValueKind::Array(Array::new(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))]], (1, 1))),
+                (1, 1)
+            ))
         );
         assert_eq!(
             array_value("[1,2]".into()).map(pair_span_to_position),
             Ok(Value::new(
-                ValueKind::Array(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))], vec![Value::new(ValueKind::Integer(2), (1, 4))]]),
+                ValueKind::Array(Array::new(
+                    vec![vec![Value::new(ValueKind::Integer(1), (1, 2))], vec![Value::new(ValueKind::Integer(2), (1, 4))]],
+                    (1, 1)
+                )),
                 (1, 1)
             ))
         );
         assert_eq!(
             array_value("[1,2,]".into()).map(pair_span_to_position),
             Ok(Value::new(
-                ValueKind::Array(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))], vec![Value::new(ValueKind::Integer(2), (1, 4))]]),
+                ValueKind::Array(Array::new(
+                    vec![vec![Value::new(ValueKind::Integer(1), (1, 2))], vec![Value::new(ValueKind::Integer(2), (1, 4))]],
+                    (1, 1)
+                )),
                 (1, 1)
             ))
         );
@@ -513,7 +525,10 @@ mod tests {
         assert_eq!(value_chunk("true".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Boolean(true), (1, 1))));
         assert_eq!(value_chunk("123".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Integer(123), (1, 1))));
         assert_eq!(value_chunk("1.23".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Real(1.23), (1, 1))));
-        assert_eq!(value_chunk("[]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![]), (1, 1))));
+        assert_eq!(
+            value_chunk("[]".into()).map(pair_span_to_position),
+            Ok(Value::new(ValueKind::Array(Array::new(vec![], (1, 1))), (1, 1)))
+        );
         assert_eq!(
             value_chunk("{}".into()).map(pair_span_to_position),
             Ok(Value::new(ValueKind::Object(Object::new(vec![], (1, 1))), (1, 1)))
@@ -842,8 +857,12 @@ mod tests {
             ValueKind::String(v) => ValueKind::String(v),
             ValueKind::Substitution(v) => ValueKind::Substitution(v),
             ValueKind::Array(v) => {
-                let res = v.into_iter().map(|x| x.into_iter().map(replace_span).collect()).collect();
-                ValueKind::Array(res)
+                let span = v.span;
+                let line = span.location_line();
+                let column = span.get_column();
+                let position = (line, column);
+                let items = v.items.into_iter().map(|x| x.into_iter().map(replace_span).collect()).collect();
+                ValueKind::Array(Array::new(items, position))
             }
             ValueKind::Object(v) => ValueKind::Object(replace_object(v)),
         };

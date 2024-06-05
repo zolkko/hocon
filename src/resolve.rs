@@ -145,7 +145,7 @@ fn convert_value(value: ast::Value) -> Result<Value, Error> {
         ast::ValueKind::Real(val) => ValueKind::Real(val),
         ast::ValueKind::String(val) => ValueKind::String(val.to_string()),
         ast::ValueKind::Array(val) => {
-            let array = val.into_iter().map(fold_values).collect::<Result<Array, Error>>()?;
+            let array = val.items.into_iter().map(fold_values).collect::<Result<Array, Error>>()?;
             ValueKind::Array(array)
         }
         ast::ValueKind::Object(val) => {

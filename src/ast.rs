@@ -69,7 +69,19 @@ impl<'a, S> Object<'a, S> {
 
 pub(crate) type ArrayItem<'a, S> = Vec<Value<'a, S>>;
 
-pub(crate) type Array<'a, S> = Vec<ArrayItem<'a, S>>;
+pub(crate) type ArrayItems<'a, S> = Vec<ArrayItem<'a, S>>;
+
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct Array<'a, S> {
+    pub(crate) items: ArrayItems<'a, S>,
+    pub(crate) span: S,
+}
+
+impl<'a, S> Array<'a, S> {
+    pub(crate) fn new(items: ArrayItems<'a, S>, span: S) -> Self {
+        Self { items, span }
+    }
+}
 
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum ValueKind<'a, S> {
