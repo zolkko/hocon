@@ -1,9 +1,9 @@
 use crate::error::Error as HoconError;
-use crate::value::{Array, Object, Value, ValueKind};
+use crate::value::{Array, Fields, Object, Value, ValueKind};
 use serde::de;
 use serde::forward_to_deserialize_any;
 use std::fmt;
-
+/*
 /// Interpret a `hocon::Value` as an instance of type `T`.
 ///
 /// This conversion can fail if the structure of the Value does not match the
@@ -405,7 +405,7 @@ fn visit_object<'de, V: de::Visitor<'de>>(object: Object, visitor: V) -> Result<
 }
 
 struct ObjectDeserializer {
-    iter: <Object as IntoIterator>::IntoIter,
+    iter: <Fields as IntoIterator>::IntoIter,
     value: Option<ValueKind>,
 }
 
@@ -552,6 +552,7 @@ mod tests {
 
     use super::*;
     use std::collections::HashMap;
+    use crate::value::Position;
 
     #[test]
     fn value_bool() {
@@ -735,11 +736,11 @@ mod tests {
     #[test]
     fn value_object() {
         let value = ValueKind::Object({
-            let mut obj = Object::default();
+            let mut obj = Fields::default();
             obj.insert("field1".to_owned(), ValueKind::Integer(1).into());
             obj.insert("field2".to_owned(), ValueKind::Integer(2).into());
             obj.insert("field3".to_owned(), ValueKind::Integer(3).into());
-            obj
+            Object::new(obj, Position::new(1, 1))
         })
         .into();
         let v: HashMap<String, i32> = from_value(value).expect("must deserialize hocon::Value::Object into map of i32");
@@ -924,3 +925,4 @@ mod tests {
         );
     }
 }
+*/

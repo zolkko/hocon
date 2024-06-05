@@ -1,7 +1,8 @@
 use crate::ast;
-use crate::ast::{FieldOp, FieldOrInclude, PathRef, Span};
+use crate::ast::{ArrayItem, FieldOp, FieldOrInclude, PathRef, Span};
 use crate::error::Error;
-use crate::value::{Array, Object, Position, Value, ValueKind};
+use crate::value::{Array, ArrayItems, Fields, Object, Position, Value, ValueKind};
+
 
 pub(crate) fn resolve(input: ast::Value) -> Result<Value, Error> {
     let span = input.span;
@@ -18,7 +19,10 @@ pub(crate) fn resolve(input: ast::Value) -> Result<Value, Error> {
 }
 
 fn convert_object(from: ast::Object<ast::Span>) -> Result<Object, Error> {
-    let mut object = Object::new();
+    let line = from.span.location_line() as usize;
+    let column = from.span.get_column();
+
+    let mut object = Object::new(Fields::new(), Position::new(line, column));
 
     for item in from.fields {
         match item {
@@ -57,7 +61,7 @@ fn object_append(out: &mut Object, path: PathRef, value: Value) -> Result<(), Er
                 }
                 None => {
                     let pos = value.1.clone();
-                    out.insert(name.to_string(), Value(ValueKind::Array(vec![value]), pos));
+                    out.insert(name.to_string(), Value(ValueKind::Array(Array::new(vec![value], pos.clone())), pos));
                     Ok(())
                 }
                 _ => {
@@ -145,8 +149,11 @@ fn convert_value(value: ast::Value) -> Result<Value, Error> {
         ast::ValueKind::Real(val) => ValueKind::Real(val),
         ast::ValueKind::String(val) => ValueKind::String(val.to_string()),
         ast::ValueKind::Array(val) => {
-            let array = val.items.into_iter().map(fold_values).collect::<Result<Array, Error>>()?;
-            ValueKind::Array(array)
+            let line = val.span.location_line() as usize;
+            let column = val.span.get_column();
+            let position = Position::new(line, column);
+            let array_items = val.items.into_iter().map(fold_values).collect::<Result<ArrayItems, Error>>()?;
+            ValueKind::Array(Array::new(array_items, position))
         }
         ast::ValueKind::Object(val) => {
             let obj = convert_object(val)?;
@@ -180,7 +187,7 @@ fn value_to_string(Value(value, _): Value) -> Result<String, Error> {
 
 fn object_to_string(obj: Object) -> Result<String, Error> {
     let mut res: String = "{".to_string();
-    let mut obj_iter = obj.into_iter();
+    let mut obj_iter = obj.fields.into_iter();
     if let Some((k, v)) = obj_iter.next() {
         res += &k;
         res += ":";
@@ -199,7 +206,7 @@ fn object_to_string(obj: Object) -> Result<String, Error> {
 
 fn array_to_string(vals: Array) -> Result<String, Error> {
     let mut res: String = "[".to_string();
-    let mut vals_iter = vals.into_iter();
+    let mut vals_iter = vals.items.into_iter();
     if let Some(x) = vals_iter.next() {
         res += &value_to_string(x)?;
         for val in vals_iter {
@@ -218,7 +225,28 @@ fn cast_values_to_objects(values: Vec<Value>) -> impl IntoIterator<Item = Object
 }
 
 fn merge_objects(objects: impl IntoIterator<Item = Object>) -> Object {
-    objects.into_iter().flat_map(|x| x.into_iter()).collect()
+    let res = objects.into_iter().fold(None, |acc, x| {
+        match acc {
+            None => {
+                let all_fields = x.fields;
+                let position = x.position;
+                Some((all_fields, position))
+            }
+            Some((mut all_fields, position)) => {
+                all_fields.extend(x.fields);
+                Some((all_fields, position))
+            }
+        }
+    });
+
+    match res {
+        Some((all_fields, position)) => {
+            Object::new(all_fields, position)
+        },
+        None => {
+            Object::new(Fields::default(), Position::default())
+        }
+    }
 }
 
 fn cast_values_to_arrays(values: Vec<Value>) -> impl IntoIterator<Item = Array> {
@@ -228,7 +256,22 @@ fn cast_values_to_arrays(values: Vec<Value>) -> impl IntoIterator<Item = Array> 
 }
 
 fn merge_arrays(arrays: impl IntoIterator<Item = Array>) -> Array {
-    arrays.into_iter().flatten().collect()
+    let res = arrays.into_iter().fold(None, |acc, x| {
+        match acc {
+            None => {
+                Some((x.items, x.position))
+            }
+            Some((mut all_items, pos)) => {
+                all_items.extend(x.items);
+                Some((all_items, pos))
+            }
+        }
+    });
+
+    match res {
+        Some((items, position)) => Array::new(items, position),
+        None => Array::new(ArrayItems::default(), Position::default())
+    }
 }
 
 fn all_objects(values: &[Value]) -> bool {

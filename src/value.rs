@@ -1,8 +1,10 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::hash::Hash;
 
 static MISSING_KEY: ValueKind = ValueKind::BadValue(crate::error::Error::missing_key());
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Default, Clone, PartialEq, Debug)]
 pub struct Position {
     line: usize,
     column: usize,
@@ -68,11 +70,71 @@ impl Default for ValueKind {
     }
 }
 
+pub type ArrayItems = Vec<Value>;
+
 /// Owned hocon array.
-pub type Array = Vec<Value>;
+#[derive(Clone, PartialEq, Default, Debug)]
+pub struct Array {
+    pub items: ArrayItems,
+    pub position: Position,
+}
+
+impl Array {
+    pub fn new(items: ArrayItems, position: Position) -> Self {
+        Self { items, position }
+    }
+
+    pub fn push(&mut self, value: Value) {
+        self.items.push(value)
+    }
+}
+
+pub type Fields = HashMap<String, Value>;
 
 /// Owned hocon object.
-pub type Object = HashMap<String, Value>;
+#[derive(Default, Clone, PartialEq, Debug)]
+pub struct Object {
+    pub fields: Fields,
+    pub position: Position,
+}
+
+impl Object {
+    pub fn new(fields: Fields, position: Position) -> Self {
+        Self { fields, position }
+    }
+
+    #[inline(always)]
+    pub fn get<Q>(&self, k: &Q) -> Option<&Value>
+    where
+        String: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        self.fields.get(k)
+    }
+
+    #[inline(always)]
+    pub fn insert(&mut self, k: String, v: Value) -> Option<Value> {
+        self.fields.insert(k, v)
+    }
+
+    #[inline(always)]
+    pub fn get_mut<Q>(&mut self, k: &Q) -> Option<&mut Value>
+        where
+            String: Borrow<Q>,
+            Q: Hash + Eq + ?Sized,
+    {
+        self.fields.get_mut(k)
+    }
+
+    #[inline(always)]
+    pub fn contains_key<Q>(&self, k: &Q) -> bool
+        where
+            String: Borrow<Q>,
+            Q: Hash + Eq + ?Sized,
+    {
+        self.fields.contains_key(k)
+    }
+}
 
 /// Hocon format allows a user to either assign (`=`, `:`) a value to a field or
 /// append (`+=`) a value to an array.
@@ -128,9 +190,8 @@ impl ObjectOps for Object {
                         }),
                     }
                 } else {
-                    // FIXME: use real coordinates
-                    let pos = Position::new(0, 0);
-                    self.insert(key.to_owned(), Value::new(ValueKind::Array(vec![value]), pos));
+                    let pos = value.1.clone();
+                    self.insert(key.to_owned(), Value::new(ValueKind::Array(Array::new(vec![value], pos.clone())), pos));
                     Ok(())
                 }
             } else {
@@ -156,7 +217,7 @@ impl ObjectOps for Object {
     }
 
     fn merge_object(&mut self, second: &Object) {
-        for (k, v) in second {
+        for (k, v) in second.fields.iter() {
             if let Value(ValueKind::Object(from), _) = v {
                 if let Some(Value(ValueKind::Object(to), _)) = self.get_mut(k) {
                     to.merge_object(from);
