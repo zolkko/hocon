@@ -3,7 +3,7 @@ use crate::value::{Array, Fields, Object, Value, ValueKind};
 use serde::de;
 use serde::forward_to_deserialize_any;
 use std::fmt;
-/*
+
 /// Interpret a `hocon::Value` as an instance of type `T`.
 ///
 /// This conversion can fail if the structure of the Value does not match the
@@ -337,7 +337,7 @@ struct ArrayDeserializer {
 impl ArrayDeserializer {
     fn new(array: Array) -> Self {
         ArrayDeserializer {
-            iter: array.into_iter().map(|x| x.0).collect::<Vec<_>>().into_iter(),
+            iter: array.items.into_iter().map(|x| x.0).collect::<Vec<_>>().into_iter(),
         }
     }
 }
@@ -412,7 +412,7 @@ struct ObjectDeserializer {
 impl ObjectDeserializer {
     fn new(object: Object) -> Self {
         ObjectDeserializer {
-            iter: object.into_iter(),
+            iter: object.fields.into_iter(),
             value: None,
         }
     }
@@ -471,7 +471,7 @@ impl<'de> de::Deserializer<'de> for ObjectDeserializer {
 fn visit_enum<'de, V: de::Visitor<'de>>(v: ValueKind, visitor: V) -> Result<V::Value, HoconError> {
     let (variant, value) = match v {
         ValueKind::Object(value) => {
-            let mut iter = value.into_iter();
+            let mut iter = value.fields.into_iter();
             let (variant, Value(value, _)) = match iter.next() {
                 Some(v) => v,
                 None => {
@@ -724,11 +724,21 @@ mod tests {
 
     #[test]
     fn value_array() {
-        let value = ValueKind::Array(vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into(), ValueKind::Integer(3).into()]).into();
+        let value = ValueKind::Array(
+            Array::new(
+            vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into(), ValueKind::Integer(3).into()],
+            Position::new(1, 1)
+            )
+        ).into();
         let v: Vec<i32> = from_value(value).expect("must deserialize hocon::Value::Array into vector of i32");
         assert_eq!(&v, &[1, 2, 3]);
 
-        let value = ValueKind::Array(vec![ValueKind::Integer(3).into(), ValueKind::Integer(2).into(), ValueKind::Integer(1).into()]).into();
+        let value = ValueKind::Array(
+            Array::new(
+            vec![ValueKind::Integer(3).into(), ValueKind::Integer(2).into(), ValueKind::Integer(1).into()],
+                Position::new(1, 1)
+            )
+        ).into();
         let v: Vec<u32> = from_value(value).expect("must deserialize hocon::Value::Array into vector of u32");
         assert_eq!(&v, &[3, 2, 1]);
     }
@@ -772,13 +782,16 @@ mod tests {
     #[test]
     fn value_tuple() {
         let v: (i32, i32) =
-            from_value(ValueKind::Array(vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into()]).into()).expect("must deserialize hocon::Value::Array into tuple of i32");
+            from_value(ValueKind::Array(
+                Array::new(
+                vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into()], Position::new(1, 1))
+            ).into()).expect("must deserialize hocon::Value::Array into tuple of i32");
         assert_eq!(v, (1, 2));
 
-        let v: Result<(i32, i32), _> = from_value(ValueKind::Array(vec![ValueKind::Integer(1).into()]).into());
+        let v: Result<(i32, i32), _> = from_value(ValueKind::Array(Array::new(vec![ValueKind::Integer(1).into()], Position::new(1, 1))).into());
         assert!(v.is_err(), "expected a tuple of size 2");
 
-        let v: Result<(i32, i32), _> = from_value(ValueKind::Array(vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into(), ValueKind::Integer(3).into()]).into());
+        let v: Result<(i32, i32), _> = from_value(ValueKind::Array(Array::new(vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into(), ValueKind::Integer(3).into()], Position::new(1, 1))).into());
         assert!(v.is_err(), "expected a tuple of size 2");
 
         let v: Result<(i32, i32), _> = from_value(ValueKind::Null.into());
@@ -793,7 +806,8 @@ mod tests {
         pub struct TupleStruct(pub i32, pub i32);
 
         let v: TupleStruct =
-            from_value(ValueKind::Array(vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into()]).into()).expect("must deserialize hocon::Value::Array into tuple of i32");
+            from_value(ValueKind::Array(
+                Array::new(vec![ValueKind::Integer(1).into(), ValueKind::Integer(2).into()], Position::new(1, 1))).into()).expect("must deserialize hocon::Value::Array into tuple of i32");
         assert_eq!(v, TupleStruct(1, 2));
     }
 
@@ -836,7 +850,7 @@ mod tests {
             }
         );
 
-        let v: TestStruct = from_value(ValueKind::Array(vec![ValueKind::Integer(1).into(), ValueKind::String("2".to_owned()).into()]).into())
+        let v: TestStruct = from_value(ValueKind::Array(Array::new(vec![ValueKind::Integer(1).into(), ValueKind::String("2".to_owned()).into()], Position::new(1, 1))).into())
             .expect("must deserialize hocon::Value::Object into TestStruct");
         assert_eq!(
             v,
@@ -856,7 +870,7 @@ mod tests {
         );
         assert!(v.is_err(), "missing field field1");
 
-        let v: Result<TestStruct, _> = from_value(ValueKind::Array(vec![ValueKind::Integer(1).into()]).into());
+        let v: Result<TestStruct, _> = from_value(ValueKind::Array(Array::new(vec![ValueKind::Integer(1).into()], Position::new(1, 1))).into());
         assert!(v.is_err(), "not enough elements in the array");
     }
 
@@ -925,4 +939,3 @@ mod tests {
         );
     }
 }
-*/

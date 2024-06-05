@@ -1,5 +1,5 @@
 use crate::ast;
-use crate::ast::{ArrayItem, FieldOp, FieldOrInclude, PathRef, Span};
+use crate::ast::{FieldOp, FieldOrInclude, PathRef, Span};
 use crate::error::Error;
 use crate::value::{Array, ArrayItems, Fields, Object, Position, Value, ValueKind};
 
