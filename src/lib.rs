@@ -1,8 +1,8 @@
+use crate::ast::Span;
 pub use crate::error::Error;
 use crate::parser::root;
 pub use crate::value::Value;
 use serde::de::DeserializeOwned;
-use crate::ast::Span;
 
 mod ast;
 mod de;

@@ -1,24 +1,26 @@
 use crate::ast;
-use crate::ast::{FieldOp, FieldOrInclude, PathRef, Value as AstValue};
+use crate::ast::{FieldOp, FieldOrInclude, PathRef, Span};
 use crate::error::Error;
-use crate::value::{Array, Object, Value};
+use crate::value::{Array, Object, Position, Value, ValueKind};
 
-pub(crate) fn resolve(input: AstValue) -> Result<Value, Error> {
-    todo!()
-    /*
-    match input {
-        AstValue::Object(object) => {
+pub(crate) fn resolve(input: ast::Value) -> Result<Value, Error> {
+    let span = input.span;
+    let column = span.get_column();
+    let line = span.location_line() as usize;
+    match input.kind {
+        ast::ValueKind::Object(object) => {
             let root_object = convert_object(object)?;
-            Ok(Value::Object(root_object))
+            let position = Position::new(line, column);
+            Ok(Value::new(ValueKind::Object(root_object), position))
         }
-        _ => Err(Error::message("top level entity must be an object")),
-    }*/
+        _ => Err(Error::string(format!("top level entity defined at line {line}, column {column} must be an object"))),
+    }
 }
-/*
-fn convert_object(from: ast::Object) -> Result<Object, Error> {
-    let mut object = Object::default();
 
-    for item in from {
+fn convert_object(from: ast::Object<ast::Span>) -> Result<Object, Error> {
+    let mut object = Object::new();
+
+    for item in from.fields {
         match item {
             FieldOrInclude::Field(field) => match field.op {
                 FieldOp::Assign(values) => {
@@ -30,7 +32,8 @@ fn convert_object(from: ast::Object) -> Result<Object, Error> {
                     object_append(&mut object, &field.path, value)?;
                 }
                 FieldOp::Object(o) => {
-                    let value = convert_value(ast::Value::Object(o))?;
+                    let span = Span::new("FIXME");
+                    let value = convert_value(ast::Value::new(ast::ValueKind::Object(o), span))?;
                     object_assign(&mut object, &field.path, value)?;
                 }
             },
@@ -48,12 +51,13 @@ fn object_append(out: &mut Object, path: PathRef, value: Value) -> Result<(), Er
         [] => Ok(()),
         [name] => {
             match out.get_mut(*name) {
-                Some(Value::Array(ref mut array)) => {
+                Some(Value(ValueKind::Array(ref mut array), _)) => {
                     array.push(value);
                     Ok(())
                 }
                 None => {
-                    out.insert(name.to_string(), Value::Array(vec![value]));
+                    let pos = value.1.clone();
+                    out.insert(name.to_string(), Value(ValueKind::Array(vec![value]), pos));
                     Ok(())
                 }
                 _ => {
@@ -64,10 +68,11 @@ fn object_append(out: &mut Object, path: PathRef, value: Value) -> Result<(), Er
         }
         [name, tail @ ..] => {
             if !out.contains_key(*name) {
-                out.insert(name.to_string(), Value::Object(Object::default()));
+                // Maybe it is better to inset parent's position?
+                out.insert(name.to_string(), Value::new(ValueKind::Object(Object::default()), value.1.clone()));
             }
             let maybe_child_object = out.get_mut(*name);
-            if let Some(Value::Object(ref mut child_object)) = maybe_child_object {
+            if let Some(Value(ValueKind::Object(ref mut child_object), _)) = maybe_child_object {
                 object_append(child_object, tail, value)
             } else {
                 // Shall I allow addressing array elements?
@@ -86,10 +91,10 @@ fn object_assign(out: &mut Object, path: PathRef, value: Value) -> Result<(), Er
         }
         [name, tail @ ..] => {
             if !out.contains_key(*name) {
-                out.insert(name.to_string(), Value::Object(Object::default()));
+                out.insert(name.to_string(), Value::new(ValueKind::Object(Object::default()), value.1.clone()));
             }
             let maybe_child_object = out.get_mut(*name);
-            if let Some(Value::Object(ref mut child_object)) = maybe_child_object {
+            if let Some(Value(ValueKind::Object(ref mut child_object), _)) = maybe_child_object {
                 object_assign(child_object, tail, value)
             } else {
                 // Shall I allow addressing array elements?
@@ -102,22 +107,24 @@ fn object_assign(out: &mut Object, path: PathRef, value: Value) -> Result<(), Er
 fn fold_values(mut values: Vec<ast::Value>) -> Result<Value, Error> {
     if values.len() > 1 {
         let values = convert_values(values)?;
+        let position = values.first().map(|Value(_, p)| p.clone()).unwrap_or(Position::new(0, 0));
         if all_arrays(&values) {
             let array_values = cast_values_to_arrays(values);
             let merged_array = merge_arrays(array_values);
-            Ok(Value::Array(merged_array))
+            Ok(Value::new(ValueKind::Array(merged_array), position))
         } else if all_objects(&values) {
             let object_values = cast_values_to_objects(values);
             let merged_object = merge_objects(object_values);
-            Ok(Value::Object(merged_object))
+            Ok(Value::new(ValueKind::Object(merged_object), position))
         } else {
             let merged_string = values.into_iter().map(value_to_string).collect::<Result<String, _>>()?;
-            Ok(Value::String(merged_string))
+            Ok(Value::new(ValueKind::String(merged_string), position))
         }
     } else if let Some(value) = values.pop() {
         convert_value(value)
     } else {
-        Ok(Value::Null)
+        // TODO: pass default position from the previous token.
+        Ok(Value::new(ValueKind::Null, Position::new(0, 0)))
     }
 }
 
@@ -126,43 +133,48 @@ fn convert_values(values: Vec<ast::Value>) -> Result<Vec<Value>, Error> {
 }
 
 fn convert_value(value: ast::Value) -> Result<Value, Error> {
-    let res = match value {
-        ast::Value::Null => Value::Null,
-        ast::Value::Boolean(val) => Value::Boolean(val),
-        ast::Value::Integer(val) => Value::Integer(val),
-        ast::Value::Real(val) => Value::Real(val),
-        ast::Value::String(val) => Value::String(val.to_string()),
-        ast::Value::Array(val) => {
+    let span = value.span;
+    let line = span.location_line();
+    let column = span.get_column();
+    let position = Position::new(line as usize, column);
+
+    let kind = match value.kind {
+        ast::ValueKind::Null => ValueKind::Null,
+        ast::ValueKind::Boolean(val) => ValueKind::Boolean(val),
+        ast::ValueKind::Integer(val) => ValueKind::Integer(val),
+        ast::ValueKind::Real(val) => ValueKind::Real(val),
+        ast::ValueKind::String(val) => ValueKind::String(val.to_string()),
+        ast::ValueKind::Array(val) => {
             let array = val.into_iter().map(fold_values).collect::<Result<Array, Error>>()?;
-            Value::Array(array)
+            ValueKind::Array(array)
         }
-        ast::Value::Object(val) => {
+        ast::ValueKind::Object(val) => {
             let obj = convert_object(val)?;
-            Value::Object(obj)
+            ValueKind::Object(obj)
         }
-        ast::Value::Substitution(_) => {
+        ast::ValueKind::Substitution(_) => {
             // TODO(zolkko): substitutions are not yet implemented
             // unimplemented!()
-            Value::Null
+            ValueKind::Null
         }
     };
 
-    Ok(res)
+    Ok(Value::new(kind, position))
 }
 
-fn value_to_string(value: Value) -> Result<String, Error> {
+fn value_to_string(Value(value, _): Value) -> Result<String, Error> {
     // Use a function instead of ToString/Display trait
     // because it may require context to render Substitution.
 
     Ok(match value {
-        Value::Null => "".to_string(),
-        Value::Boolean(val) => val.to_string(),
-        Value::Integer(val) => val.to_string(),
-        Value::Real(val) => val.to_string(),
-        Value::String(val) => val,
-        Value::Array(array) => array_to_string(array)?,
-        Value::Object(object) => object_to_string(object)?,
-        Value::BadValue(err) => err.to_string(),
+        ValueKind::Null => "".to_string(),
+        ValueKind::Boolean(val) => val.to_string(),
+        ValueKind::Integer(val) => val.to_string(),
+        ValueKind::Real(val) => val.to_string(),
+        ValueKind::String(val) => val,
+        ValueKind::Array(array) => array_to_string(array)?,
+        ValueKind::Object(object) => object_to_string(object)?,
+        ValueKind::BadValue(err) => err.to_string(),
     })
 }
 
@@ -200,7 +212,9 @@ fn array_to_string(vals: Array) -> Result<String, Error> {
 }
 
 fn cast_values_to_objects(values: Vec<Value>) -> impl IntoIterator<Item = Object> {
-    values.into_iter().filter_map(|x| if let Value::Object(object) = x { Some(object) } else { None })
+    values
+        .into_iter()
+        .filter_map(|x| if let Value(ValueKind::Object(object), _) = x { Some(object) } else { None })
 }
 
 fn merge_objects(objects: impl IntoIterator<Item = Object>) -> Object {
@@ -208,7 +222,9 @@ fn merge_objects(objects: impl IntoIterator<Item = Object>) -> Object {
 }
 
 fn cast_values_to_arrays(values: Vec<Value>) -> impl IntoIterator<Item = Array> {
-    values.into_iter().filter_map(|x| if let Value::Array(array) = x { Some(array) } else { None })
+    values
+        .into_iter()
+        .filter_map(|x| if let Value(ValueKind::Array(array), _) = x { Some(array) } else { None })
 }
 
 fn merge_arrays(arrays: impl IntoIterator<Item = Array>) -> Array {
@@ -216,10 +232,9 @@ fn merge_arrays(arrays: impl IntoIterator<Item = Array>) -> Array {
 }
 
 fn all_objects(values: &[Value]) -> bool {
-    values.iter().all(|x| matches!(x, Value::Object(_)))
+    values.iter().all(|x| matches!(x, Value(ValueKind::Object(_), _)))
 }
 
 fn all_arrays(values: &[Value]) -> bool {
-    values.iter().all(|x| matches!(x, Value::Array(_)))
+    values.iter().all(|x| matches!(x, Value(ValueKind::Array(_), _)))
 }
-*/

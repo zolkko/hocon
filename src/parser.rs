@@ -1,4 +1,4 @@
-use crate::ast::{Field, FieldOp, FieldOrInclude, Include, IncludePath, Object, Path, Substitution, Value, ValueKind, Span};
+use crate::ast::{Field, FieldOp, FieldOrInclude, Fields, Include, IncludePath, Object, Path, Span, Substitution, Value, ValueKind};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case, take_while};
 use nom::character::complete::{anychar, char, hex_digit1, line_ending, multispace0, multispace1, space0};
@@ -6,8 +6,7 @@ use nom::combinator::{eof, map, map_res, not, opt, recognize, value};
 use nom::multi::{many0, many1, many_m_n};
 use nom::number::complete::recognize_float;
 use nom::sequence::{delimited, pair, preceded, separated_pair, terminated, tuple};
-use nom::{IResult};
-
+use nom::IResult;
 
 fn make_value<'a>(kind: ValueKind<'a, Span<'a>>, input: Span<'a>, reminder: Span<'a>) -> IResult<Span<'a>, Value<'a>> {
     Ok((reminder, Value::new(kind, input)))
@@ -122,7 +121,13 @@ fn separator(input: Span) -> IResult<Span, ()> {
 fn array_value(input: Span) -> IResult<Span, Value> {
     let begin = pair(char('['), empty_lines);
     let elements = terminated(opt(pair(value_chunks, terminated(many0(preceded(separator, value_chunks)), opt(separator)))), empty_lines);
-    let elements_value = map(elements, |maybe_x| if let Some(x) = maybe_x { ValueKind::Array(combine_vec(x)) } else { ValueKind::Array(vec![]) });
+    let elements_value = map(elements, |maybe_x| {
+        if let Some(x) = maybe_x {
+            ValueKind::Array(combine_vec(x))
+        } else {
+            ValueKind::Array(vec![])
+        }
+    });
     let end = pair(char(']'), space0);
 
     let (reminder, kind) = delimited(begin, elements_value, end)(input)?;
@@ -150,14 +155,12 @@ fn field_append(input: Span) -> IResult<Span, Span> {
 /// field_path = { (string | field_name) ~ (path_delimiter ~ (string | field_name))* }
 /// ```
 fn field_path(input: Span) -> IResult<Span, Path> {
-    map(
-        pair(field_name_or_string, many0(preceded(path_delimiter, field_name_or_string))),
-        |(h, r)| {
-            let mut result: Path = Vec::with_capacity(1 + r.len());
-            result.push(h.fragment());
-            result.extend(r.into_iter().map(Span::into_fragment));
-            result
-        })(input)
+    map(pair(field_name_or_string, many0(preceded(path_delimiter, field_name_or_string))), |(h, r)| {
+        let mut result: Path = Vec::with_capacity(1 + r.len());
+        result.push(h.fragment());
+        result.extend(r.into_iter().map(Span::into_fragment));
+        result
+    })(input)
 }
 
 /// ```ebnf
@@ -193,7 +196,7 @@ fn field_or_include(input: Span) -> IResult<Span, FieldOrInclude<Span>> {
 /// ```peg
 /// object_body = { field_or_include ~ (separator ~ field_or_include)* ~ separator? }
 /// ```
-fn object_body(input: Span) -> IResult<Span, Object<Span>> {
+fn object_body(input: Span) -> IResult<Span, Fields<Span>> {
     // TODO ... comments and empty lines
     let parser = terminated(pair(field_or_include, many0(preceded(separator, field_or_include))), opt(separator));
     map(parser, combine_vec)(input)
@@ -204,8 +207,8 @@ fn object_body(input: Span) -> IResult<Span, Object<Span>> {
 /// ```
 fn object(input: Span) -> IResult<Span, Object<Span>> {
     let object_body_parser = map(opt(object_body), |mo| match mo {
-        Some(o) => o,
-        None => vec![],
+        Some(o) => Object::new(o, input),
+        None => Object::new(vec![], input),
     });
     delimited(pair(char('{'), empty_lines), terminated(object_body_parser, empty_lines), pair(char('}'), space0))(input)
 }
@@ -425,10 +428,11 @@ fn combine_vec<T>((head, mut rest): (T, Vec<T>)) -> Vec<T> {
 }
 
 pub(crate) fn root(input: Span) -> IResult<Span, Value> {
-    let object_or_body = alt((object, object_body));
+    let obj_body = map(object_body, |x| Object::new(x, input));
+    let object_or_body = alt((object, obj_body));
     let value = map(opt(object_or_body), |maybe_body| match maybe_body {
         Some(body) => ValueKind::Object(body),
-        None => ValueKind::Object(vec![]),
+        None => ValueKind::Object(Object::new(vec![], input)),
     });
     let parser = delimited(empty_lines, value, empty_lines);
     let (reminder, kind) = terminated(parser, eof)(input)?;
@@ -454,7 +458,8 @@ mod tests {
         // comment 4 and 5
 
 
-        "#.into(),
+        "#
+            .into(),
         );
 
         assert_eq!(res.map(|x| x.1), Ok(()));
@@ -465,13 +470,14 @@ mod tests {
         let input = "{ name: value }";
 
         let expected = Value::<Position>::new(
-            ValueKind::Object(vec![FieldOrInclude::Field(Field {
-                path: vec!["name"],
-                op: FieldOp::Assign(vec![
-                    Value::<Position>::new(ValueKind::String("value"), (1, 9))
-                ]),
-            })]),
-            (1, 1)
+            ValueKind::Object(Object::new(
+                vec![FieldOrInclude::Field(Field {
+                    path: vec!["name"],
+                    op: FieldOp::Assign(vec![Value::<Position>::new(ValueKind::String("value"), (1, 9))]),
+                })],
+                (1, 1),
+            )),
+            (1, 1),
         );
 
         let result = root(input.into()).map(pair_span_to_position);
@@ -482,20 +488,24 @@ mod tests {
     #[test]
     fn test_parse_array() {
         assert_eq!(array_value("[]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![]), (1, 1))));
-        assert_eq!(array_value("[1]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![vec![
-            Value::new(
-                ValueKind::Integer(1),
-                (1, 2))
-        ]]), (1, 1))));
-        assert_eq!(array_value("[1,2]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![vec![
-            Value::new(ValueKind::Integer(1), (1, 2))
-        ], vec![
-            Value::new(ValueKind::Integer(2), (1, 4))
-        ]]), (1, 1))));
-        assert_eq!(array_value("[1,2,]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![
-            vec![Value::new(ValueKind::Integer(1), (1, 2))],
-            vec![Value::new(ValueKind::Integer(2), (1, 4))]
-        ]), (1, 1))));
+        assert_eq!(
+            array_value("[1]".into()).map(pair_span_to_position),
+            Ok(Value::new(ValueKind::Array(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))]]), (1, 1)))
+        );
+        assert_eq!(
+            array_value("[1,2]".into()).map(pair_span_to_position),
+            Ok(Value::new(
+                ValueKind::Array(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))], vec![Value::new(ValueKind::Integer(2), (1, 4))]]),
+                (1, 1)
+            ))
+        );
+        assert_eq!(
+            array_value("[1,2,]".into()).map(pair_span_to_position),
+            Ok(Value::new(
+                ValueKind::Array(vec![vec![Value::new(ValueKind::Integer(1), (1, 2))], vec![Value::new(ValueKind::Integer(2), (1, 4))]]),
+                (1, 1)
+            ))
+        );
     }
 
     #[test]
@@ -504,9 +514,18 @@ mod tests {
         assert_eq!(value_chunk("123".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Integer(123), (1, 1))));
         assert_eq!(value_chunk("1.23".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Real(1.23), (1, 1))));
         assert_eq!(value_chunk("[]".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Array(vec![]), (1, 1))));
-        assert_eq!(value_chunk("{}".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::Object(vec![]), (1, 1))));
-        assert_eq!(value_chunk(r#""string1""#.into()).map(pair_span_to_position), Ok(Value::new(ValueKind::String("string1"), (1, 1))));
-        assert_eq!(value_chunk(r#""""string2""""#.into()).map(pair_span_to_position), Ok(Value::new(ValueKind::String("string2"), (1, 1))));
+        assert_eq!(
+            value_chunk("{}".into()).map(pair_span_to_position),
+            Ok(Value::new(ValueKind::Object(Object::new(vec![], (1, 1))), (1, 1)))
+        );
+        assert_eq!(
+            value_chunk(r#""string1""#.into()).map(pair_span_to_position),
+            Ok(Value::new(ValueKind::String("string1"), (1, 1)))
+        );
+        assert_eq!(
+            value_chunk(r#""""string2""""#.into()).map(pair_span_to_position),
+            Ok(Value::new(ValueKind::String("string2"), (1, 1)))
+        );
         assert_eq!(value_chunk("string".into()).map(pair_span_to_position), Ok(Value::new(ValueKind::String("string"), (1, 1))));
     }
 
@@ -546,61 +565,49 @@ mod tests {
     fn test_parse_field() {
         assert_eq!(
             field("name: value".into()).map(|x| replace_field(x.1)),
-            Ok(
-                Field {
-                    path: vec!["name"],
-                    op: FieldOp::Assign(vec![
-                        Value::new(ValueKind::String("value"), (1, 7)),
-                    ]),
-                }
-            )
+            Ok(Field {
+                path: vec!["name"],
+                op: FieldOp::Assign(vec![Value::new(ValueKind::String("value"), (1, 7)),]),
+            })
         );
 
         assert_eq!(
             field("name1.name2: value".into()).map(|x| replace_field(x.1)),
-            Ok(
-                Field {
-                    path: vec!["name1", "name2"],
-                    op: FieldOp::Assign(vec![
-                        Value::new(ValueKind::String("value"), (1, 14))
-                    ]),
-                }
-            )
+            Ok(Field {
+                path: vec!["name1", "name2"],
+                op: FieldOp::Assign(vec![Value::new(ValueKind::String("value"), (1, 14))]),
+            })
         );
     }
 
     #[test]
     fn test_parse_object() {
-        assert_eq!(object(r#"{ }"#.into()).map(|x| replace_object(x.1)), Ok(Object::default()));
+        assert_eq!(object(r#"{ }"#.into()).map(|x| replace_object(x.1)), Ok(Object::new(vec![], (1, 1))));
         assert_eq!(
             object(r#"{ field1: 123 }"#.into()).map(|x| replace_object(x.1)),
-            Ok(
+            Ok(Object::new(
                 vec![FieldOrInclude::Field(Field {
                     path: vec!["field1"],
-                    op: FieldOp::Assign(vec![
-                        Value::new(ValueKind::Integer(123), (1, 11))
-                    ]),
-                })]
-            )
+                    op: FieldOp::Assign(vec![Value::new(ValueKind::Integer(123), (1, 11))]),
+                })],
+                (1, 1)
+            ))
         );
         assert_eq!(
             object("{ field1: 123 \n field2: 321 }".into()).map(|x| replace_object(x.1)),
-            Ok(
+            Ok(Object::new(
                 vec![
                     FieldOrInclude::Field(Field {
                         path: vec!["field1"],
-                        op: FieldOp::Assign(vec![
-                            Value::new(ValueKind::Integer(123), (1, 11))
-                        ]),
+                        op: FieldOp::Assign(vec![Value::new(ValueKind::Integer(123), (1, 11))]),
                     }),
                     FieldOrInclude::Field(Field {
                         path: vec!["field2"],
-                        op: FieldOp::Assign(vec![
-                            Value::new(ValueKind::Integer(321), (2, 10))
-                        ]),
+                        op: FieldOp::Assign(vec![Value::new(ValueKind::Integer(321), (2, 10))]),
                     })
-                ]
-            )
+                ],
+                (1, 1)
+            ))
         );
     }
 
@@ -616,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_parse_field_path() {
-        assert_eq!(field_path("field".into()).map(|x| x.1), Ok( vec!["field"]));
+        assert_eq!(field_path("field".into()).map(|x| x.1), Ok(vec!["field"]));
         assert_eq!(field_path("field1.field2".into()).map(|x| x.1), Ok(vec!["field1", "field2"]));
     }
 
@@ -704,7 +711,9 @@ mod tests {
         assert_eq!(comment("// This is a comment".into()).map(convert), Ok(" This is a comment"));
         assert_eq!(comment("// This is a new-line comment\n".into()).map(convert), Ok(" This is a new-line comment"));
 
-        let res = many0(comment)("// Comment 1\n# Comment 2".into()).map(|x| x.1.into_iter().map(|i| i.into_fragment()).collect::<Vec<_>>()).unwrap();
+        let res = many0(comment)("// Comment 1\n# Comment 2".into())
+            .map(|x| x.1.into_iter().map(|i| i.into_fragment()).collect::<Vec<_>>())
+            .unwrap();
         assert_eq!(res, &[" Comment 1", " Comment 2"]);
     }
 
@@ -737,23 +746,28 @@ mod tests {
         let result = root(input.into()).map(pair_span_to_position).expect("line breaks are allowed");
         assert_eq!(
             result,
-            Value::new(ValueKind::Object(vec![FieldOrInclude::Field(Field {
-                path: vec!["requirements"],
-                op: FieldOp::Object(vec![
-                    FieldOrInclude::Field(Field {
-                        path: vec!["akka.dispatch.UnboundedMessageQueueSemantics"],
-                        op: FieldOp::Assign(vec![
-                            Value::new(ValueKind::String("akka.actor.mailbox.unbounded-queue-based"), (4, 11))
-                        ])
-                    }),
-                    FieldOrInclude::Field(Field {
-                        path: vec!["akka.dispatch.BoundedMessageQueueSemantics"],
-                        op: FieldOp::Assign(vec![
-                            Value::new(ValueKind::String("akka.actor.mailbox.bounded-queue-based"), (6, 11))
-                        ])
-                    })
-                ])
-            })]), (1, 1))
+            Value::new(
+                ValueKind::Object(Object::new(
+                    vec![FieldOrInclude::Field(Field {
+                        path: vec!["requirements"],
+                        op: FieldOp::Object(Object::new(
+                            vec![
+                                FieldOrInclude::Field(Field {
+                                    path: vec!["akka.dispatch.UnboundedMessageQueueSemantics"],
+                                    op: FieldOp::Assign(vec![Value::new(ValueKind::String("akka.actor.mailbox.unbounded-queue-based"), (4, 11))])
+                                }),
+                                FieldOrInclude::Field(Field {
+                                    path: vec!["akka.dispatch.BoundedMessageQueueSemantics"],
+                                    op: FieldOp::Assign(vec![Value::new(ValueKind::String("akka.actor.mailbox.bounded-queue-based"), (6, 11))])
+                                })
+                            ],
+                            (2, 20)
+                        ))
+                    })],
+                    (1, 1)
+                )),
+                (1, 1)
+            )
         );
     }
 
@@ -767,20 +781,22 @@ mod tests {
         let result = root(input).map(pair_span_to_position).expect("line breaks are allowed");
         assert_eq!(
             result,
-            Value::new(ValueKind::Object(vec![
-                FieldOrInclude::Field(Field {
-                    path: vec!["field-null"],
-                    op: FieldOp::Assign(vec![
-                        Value::new(ValueKind::Null, (2, 22))
-                    ]),
-                }),
-                FieldOrInclude::Field(Field {
-                    path: vec!["field-no"],
-                    op: FieldOp::Assign(vec![
-                        Value::new(ValueKind::Boolean(false), (3, 20))
-                    ]),
-                })
-            ]), (1, 1))
+            Value::new(
+                ValueKind::Object(Object::new(
+                    vec![
+                        FieldOrInclude::Field(Field {
+                            path: vec!["field-null"],
+                            op: FieldOp::Assign(vec![Value::new(ValueKind::Null, (2, 22))]),
+                        }),
+                        FieldOrInclude::Field(Field {
+                            path: vec!["field-no"],
+                            op: FieldOp::Assign(vec![Value::new(ValueKind::Boolean(false), (3, 20))]),
+                        })
+                    ],
+                    (1, 1)
+                )),
+                (1, 1)
+            )
         );
     }
 
@@ -796,7 +812,13 @@ mod tests {
             op: match op {
                 FieldOp::Assign(i) => FieldOp::Assign(i.into_iter().map(replace_span).collect()),
                 FieldOp::Append(i) => FieldOp::Append(i.into_iter().map(replace_span).collect()),
-                FieldOp::Object(i) => FieldOp::Object(i.into_iter().map(replace_field_or_include).collect()),
+                FieldOp::Object(Object { fields, span }) => FieldOp::Object({
+                    let fields = fields.into_iter().map(replace_field_or_include).collect();
+                    let line = span.location_line();
+                    let column = span.get_column();
+                    let position = (line, column);
+                    Object::new(fields, position)
+                }),
             },
         }
     }
@@ -822,15 +844,18 @@ mod tests {
             ValueKind::Array(v) => {
                 let res = v.into_iter().map(|x| x.into_iter().map(replace_span).collect()).collect();
                 ValueKind::Array(res)
-            },
+            }
             ValueKind::Object(v) => ValueKind::Object(replace_object(v)),
         };
 
         Value::new(new_kind, (line, column))
     }
 
-    fn replace_object<'a>(v: Object<'a, Span<'a>>) -> Object<'a, Position> {
-        v.into_iter().map(replace_field_or_include).collect()
+    fn replace_object<'a>(o: Object<'a, Span<'a>>) -> Object<'a, Position> {
+        let Object { fields, span } = o;
+        let fields = fields.into_iter().map(replace_field_or_include).collect();
+        let span = (span.location_line(), span.get_column());
+        Object::new(fields, span)
     }
 
     fn pair_span_to_position<'a, T>((_, x): (T, Value<'a, Span<'a>>)) -> Value<'a, Position> {

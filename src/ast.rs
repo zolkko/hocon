@@ -2,7 +2,6 @@
 //! Therefor firstly it is parsed into an AST and then AST is folded into Values.
 use nom_locate::LocatedSpan;
 
-
 pub(crate) type Span<'a> = LocatedSpan<&'a str>;
 
 pub(crate) type Path<'a> = Vec<&'a str>;
@@ -54,7 +53,19 @@ pub(crate) enum FieldOrInclude<'a, S> {
     Include(Include<'a>),
 }
 
-pub(crate) type Object<'a, S> = Vec<FieldOrInclude<'a, S>>;
+pub(crate) type Fields<'a, S> = Vec<FieldOrInclude<'a, S>>;
+
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct Object<'a, S> {
+    pub(crate) fields: Fields<'a, S>,
+    pub(crate) span: S,
+}
+
+impl<'a, S> Object<'a, S> {
+    pub(crate) fn new(fields: Vec<FieldOrInclude<'a, S>>, span: S) -> Self {
+        Object { fields, span }
+    }
+}
 
 pub(crate) type ArrayItem<'a, S> = Vec<Value<'a, S>>;
 
@@ -73,9 +84,9 @@ pub(crate) enum ValueKind<'a, S> {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Value<'a, S=Span<'a>> {
-    kind: ValueKind<'a, S>,
-    span: S,
+pub(crate) struct Value<'a, S = Span<'a>> {
+    pub kind: ValueKind<'a, S>,
+    pub span: S,
 }
 
 impl<'a, S> Value<'a, S> {

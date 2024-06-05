@@ -1,6 +1,6 @@
 [package]
 name = "hocon"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["zolkko <zolkko@gmail.com>"]
 edition = "2021"
 rust-version = "1.78.0"
