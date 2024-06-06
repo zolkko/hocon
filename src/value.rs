@@ -6,8 +6,8 @@ static MISSING_KEY: ValueKind = ValueKind::BadValue(crate::error::Error::missing
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct Position {
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl Position {
