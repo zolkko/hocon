@@ -19,7 +19,7 @@ impl Default for Position {
 }
 
 impl Position {
-    pub fn new(line: usize, column: usize) -> Self {
+    pub const fn new(line: usize, column: usize) -> Self {
         Self { line, column }
     }
 }
@@ -40,7 +40,7 @@ impl<T> std::ops::Index<T> for Value
     type Output = Value;
 
     fn index(&self, index: T) -> &Self::Output {
-        if let ValueKind::Object(ref object) = self {
+        if let Value(ValueKind::Object(ref object), _) = self {
             let key = index.as_ref();
             let Some(value) = object.get(key) else {
                 return &MISSING_KEY_VALUE;
