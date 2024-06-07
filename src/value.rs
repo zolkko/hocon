@@ -4,6 +4,8 @@ use std::hash::Hash;
 
 static MISSING_KEY: ValueKind = ValueKind::BadValue(crate::error::Error::missing_key());
 
+static MISSING_KEY_VALUE: Value = Value(ValueKind::BadValue(crate::error::Error::missing_key()), Position::new(1, 1));
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Position {
     pub line: usize,
@@ -35,10 +37,18 @@ impl<T> std::ops::Index<T> for Value
     where
         T: AsRef<str>,
 {
-    type Output = ValueKind;
+    type Output = Value;
 
     fn index(&self, index: T) -> &Self::Output {
-        &self.0[index]
+        if let ValueKind::Object(ref object) = self {
+            let key = index.as_ref();
+            let Some(value) = object.get(key) else {
+                return &MISSING_KEY_VALUE;
+            };
+            value
+        } else {
+            &MISSING_KEY_VALUE
+        }
     }
 }
 
