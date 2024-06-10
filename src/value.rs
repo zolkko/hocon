@@ -34,8 +34,8 @@ impl Value {
 }
 
 impl<T> std::ops::Index<T> for Value
-    where
-        T: AsRef<str>,
+where
+    T: AsRef<str>,
 {
     type Output = Value;
 
@@ -146,18 +146,18 @@ impl Object {
 
     #[inline(always)]
     pub fn get_mut<Q>(&mut self, k: &Q) -> Option<&mut Value>
-        where
-            String: Borrow<Q>,
-            Q: Hash + Eq + ?Sized,
+    where
+        String: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
         self.fields.get_mut(k)
     }
 
     #[inline(always)]
     pub fn contains_key<Q>(&self, k: &Q) -> bool
-        where
-            String: Borrow<Q>,
-            Q: Hash + Eq + ?Sized,
+    where
+        String: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
         self.fields.contains_key(k)
     }
@@ -260,9 +260,9 @@ impl ObjectOps for Object {
 
 #[cfg(test)]
 mod tests {
-       use super::*;
+    use super::*;
 
-       macro_rules! object {
+    macro_rules! object {
            ( $( $x:expr => $y:expr ),* ) => {
                {
                    let mut temp_obj = $crate::value::Fields::default();
@@ -274,87 +274,90 @@ mod tests {
            };
        }
 
-       #[test]
-       fn assign_non_existing() {
-           let mut obj = Object::default();
-           obj.assign_value(&vec!["field".to_owned(), "subfield".to_owned()], Value(ValueKind::Integer(123), Position::new(1, 1)));
+    #[test]
+    fn assign_non_existing() {
+        let mut obj = Object::default();
+        obj.assign_value(&vec!["field".to_owned(), "subfield".to_owned()], Value(ValueKind::Integer(123), Position::new(1, 1)));
 
-           let expected = object![
-               "field" => Value(ValueKind::Object(object![
-                   "subfield" => Value(ValueKind::Integer(123), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
+        let expected = object![
+            "field" => Value(ValueKind::Object(object![
+                "subfield" => Value(ValueKind::Integer(123), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
 
-           assert_eq!(obj, expected);
-       }
+        assert_eq!(obj, expected);
+    }
 
-       #[test]
-       fn assign_override() {
-           let mut obj = object![
-               "field" => Value(ValueKind::Object(object![
-                   "subfield" => Value(ValueKind::Integer(123), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
-           obj.assign_value(&vec!["field".to_owned(), "subfield".to_owned()], Value(ValueKind::Integer(321), Position::new(1, 1)));
+    #[test]
+    fn assign_override() {
+        let mut obj = object![
+            "field" => Value(ValueKind::Object(object![
+                "subfield" => Value(ValueKind::Integer(123), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
+        obj.assign_value(&vec!["field".to_owned(), "subfield".to_owned()], Value(ValueKind::Integer(321), Position::new(1, 1)));
 
-           let expected = object![
-               "field" => Value(ValueKind::Object(object![
-                   "subfield" => Value(ValueKind::Integer(321), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
+        let expected = object![
+            "field" => Value(ValueKind::Object(object![
+                "subfield" => Value(ValueKind::Integer(321), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
 
-           assert_eq!(obj, expected);
-       }
+        assert_eq!(obj, expected);
+    }
 
-       #[test]
-       fn assign_change_types() {
-           let mut obj = object![
-               "field" => Value(ValueKind::Object(object![
-                   "subfield" => Value(ValueKind::Integer(123), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
-           obj.assign_value(&vec!["field".to_owned(), "subfield".to_owned(), "subsubfield".to_owned()], Value(ValueKind::Integer(321), Position::new(1, 1)));
+    #[test]
+    fn assign_change_types() {
+        let mut obj = object![
+            "field" => Value(ValueKind::Object(object![
+                "subfield" => Value(ValueKind::Integer(123), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
+        obj.assign_value(
+            &vec!["field".to_owned(), "subfield".to_owned(), "subsubfield".to_owned()],
+            Value(ValueKind::Integer(321), Position::new(1, 1)),
+        );
 
-           let expected = object![
-               "field" => Value(ValueKind::Object(object![
-                   "subfield" => Value(ValueKind::Object(object![
-                       "subsubfield" => Value(ValueKind::Integer(321), Position::new(1, 1))
-                   ]), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
+        let expected = object![
+            "field" => Value(ValueKind::Object(object![
+                "subfield" => Value(ValueKind::Object(object![
+                    "subsubfield" => Value(ValueKind::Integer(321), Position::new(1, 1))
+                ]), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
 
-           assert_eq!(obj, expected);
-       }
+        assert_eq!(obj, expected);
+    }
 
-       #[test]
-       fn merge_object() {
-           let mut to_obj = object![
-               "field1" => Value(ValueKind::Object(object![
-                   "subfield1" => Value(ValueKind::Integer(1), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
+    #[test]
+    fn merge_object() {
+        let mut to_obj = object![
+            "field1" => Value(ValueKind::Object(object![
+                "subfield1" => Value(ValueKind::Integer(1), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
 
-           let from_obj = object![
-               "field1" => Value(ValueKind::Object(object![
-                   "subfield2" => Value(ValueKind::Integer(2), Position::new(1, 1))
-               ]), Position::new(1, 1)),
-               "field2" => Value(ValueKind::Object(object![
-                   "subfield3" => Value(ValueKind::Integer(3), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
+        let from_obj = object![
+            "field1" => Value(ValueKind::Object(object![
+                "subfield2" => Value(ValueKind::Integer(2), Position::new(1, 1))
+            ]), Position::new(1, 1)),
+            "field2" => Value(ValueKind::Object(object![
+                "subfield3" => Value(ValueKind::Integer(3), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
 
-           let expected = object![
-               "field1" => Value(ValueKind::Object(object![
-                   "subfield1" => Value(ValueKind::Integer(1), Position::new(1, 1)),
-                   "subfield2" => Value(ValueKind::Integer(2), Position::new(1, 1))
-               ]), Position::new(1, 1)),
-               "field2" => Value(ValueKind::Object(object![
-                   "subfield3" => Value(ValueKind::Integer(3), Position::new(1, 1))
-               ]), Position::new(1, 1))
-           ];
+        let expected = object![
+            "field1" => Value(ValueKind::Object(object![
+                "subfield1" => Value(ValueKind::Integer(1), Position::new(1, 1)),
+                "subfield2" => Value(ValueKind::Integer(2), Position::new(1, 1))
+            ]), Position::new(1, 1)),
+            "field2" => Value(ValueKind::Object(object![
+                "subfield3" => Value(ValueKind::Integer(3), Position::new(1, 1))
+            ]), Position::new(1, 1))
+        ];
 
-           to_obj.merge_object(&from_obj);
+        to_obj.merge_object(&from_obj);
 
-           assert_eq!(to_obj, expected);
-       }
+        assert_eq!(to_obj, expected);
+    }
 }

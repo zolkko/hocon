@@ -29,8 +29,8 @@ impl std::error::Error for AppendError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Position {
-    line: usize,
-    column: usize,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl fmt::Display for Position {
@@ -43,10 +43,11 @@ impl fmt::Display for Position {
 enum ErrorKind {
     Message(String),
     Grammar(Position, &'static str),
-    IntError(Position, ParseIntError),
-    FloatError(Position, ParseFloatError),
+    ParseInt(Position, ParseIntError),
+    ParseFloat(Position, ParseFloatError),
     AppendError(Position, AppendError),
     MissingKey,
+    DeserializationInvalidType { position: Position, expected: String, unexpected: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +66,12 @@ impl Error {
         Error { kind: ErrorKind::Message(s) }
     }
 
+    pub fn deserialization_invalid_type(position: Position, expected: String, unexpected: String) -> Self {
+        Error {
+            kind: ErrorKind::DeserializationInvalidType { position, expected, unexpected },
+        }
+    }
+
     pub(crate) const fn missing_key() -> Self {
         Self { kind: ErrorKind::MissingKey }
     }
@@ -75,10 +82,24 @@ impl fmt::Display for Error {
         match self.kind {
             ErrorKind::Message(ref msg) => f.write_str(msg),
             ErrorKind::Grammar(ref pos, ref descr) => write!(f, "{} {}", pos, descr),
-            ErrorKind::IntError(ref pos, ref error) => write!(f, "{} {}", pos, error),
-            ErrorKind::FloatError(ref pos, ref error) => write!(f, "{} {}", pos, error),
+            ErrorKind::ParseInt(ref pos, ref error) => write!(f, "{} {}", pos, error),
+            ErrorKind::ParseFloat(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::AppendError(ref pos, ref error) => write!(f, "{} {}", pos, error),
             ErrorKind::MissingKey => write!(f, "key does not exist"),
+            ErrorKind::DeserializationInvalidType {
+                ref position,
+                ref expected,
+                ref unexpected,
+            } => {
+                write!(
+                    f,
+                    "invalid type: {unexpected}, expected {expected}, at line {line} and column {column}",
+                    unexpected = unexpected,
+                    expected = expected,
+                    line = position.line,
+                    column = position.column
+                )
+            }
         }
     }
 }
@@ -106,7 +127,7 @@ impl From<((usize, usize), ParseIntError)> for Error {
     fn from(value: ((usize, usize), ParseIntError)) -> Self {
         let ((line, column), error) = value;
         Error {
-            kind: ErrorKind::IntError(Position { line, column }, error),
+            kind: ErrorKind::ParseInt(Position { line, column }, error),
         }
     }
 }
@@ -115,7 +136,7 @@ impl From<((usize, usize), ParseFloatError)> for Error {
     fn from(value: ((usize, usize), ParseFloatError)) -> Self {
         let ((line, column), error) = value;
         Error {
-            kind: ErrorKind::FloatError(Position { line, column }, error),
+            kind: ErrorKind::ParseFloat(Position { line, column }, error),
         }
     }
 }

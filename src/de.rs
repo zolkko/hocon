@@ -1,8 +1,8 @@
+use crate::error;
 use crate::error::Error as HoconError;
-use crate::value::{Array, Fields, Object, Value, ValueKind};
+use crate::value::{Array, Fields, Object, Position, Value, ValueKind};
 use serde::de;
 use serde::forward_to_deserialize_any;
-use std::fmt;
 
 /// Interpret a `hocon::Value` as an instance of type `T`.
 ///
@@ -14,86 +14,14 @@ use std::fmt;
 /// the Hocon object or some number is too big to fit in the expected primitive
 /// type.
 pub fn from_value<T: de::DeserializeOwned>(value: Value) -> Result<T, HoconError> {
-    de::Deserialize::deserialize(value.0)
+    de::Deserialize::deserialize(value)
 }
 
-struct ValueVisitor;
-
-impl<'de> de::Visitor<'de> for ValueVisitor {
-    type Value = ValueKind;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("any HOCON value")
-    }
-
-    fn visit_bool<E: de::Error>(self, b: bool) -> Result<ValueKind, E> {
-        Ok(ValueKind::Boolean(b))
-    }
-
-    fn visit_i64<E: de::Error>(self, i: i64) -> Result<ValueKind, E> {
-        Ok(ValueKind::Integer(i as isize))
-    }
-
-    fn visit_u64<E: de::Error>(self, u: u64) -> Result<ValueKind, E> {
-        Ok(ValueKind::Integer(u as isize))
-    }
-
-    fn visit_f64<E: de::Error>(self, f: f64) -> Result<ValueKind, E> {
-        Ok(ValueKind::Real(f))
-    }
-
-    fn visit_str<E: de::Error>(self, s: &str) -> Result<ValueKind, E> {
-        Ok(ValueKind::String(s.to_owned()))
-    }
-
-    fn visit_string<E: de::Error>(self, s: String) -> Result<ValueKind, E> {
-        Ok(ValueKind::String(s))
-    }
-
-    fn visit_none<E: de::Error>(self) -> Result<ValueKind, E> {
-        Ok(ValueKind::Null)
-    }
-
-    fn visit_some<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<ValueKind, D::Error> {
-        de::Deserialize::deserialize(deserializer)
-    }
-
-    fn visit_unit<E: de::Error>(self) -> Result<ValueKind, E> {
-        Ok(ValueKind::Null)
-    }
-
-    fn visit_seq<V: de::SeqAccess<'de>>(self, mut visitor: V) -> Result<ValueKind, V::Error> {
-        let mut vec = Array::default();
-
-        while let Some(element) = visitor.next_element()? {
-            vec.push(Value(element, crate::value::Position::new(0, 0)));
-        }
-
-        Ok(ValueKind::Array(vec))
-    }
-
-    fn visit_map<V: de::MapAccess<'de>>(self, mut visitor: V) -> Result<ValueKind, V::Error> {
-        let mut values = Object::default();
-
-        while let Some((key, value)) = visitor.next_entry()? {
-            values.insert(key, Value(value, crate::value::Position::new(0, 0)));
-        }
-
-        Ok(ValueKind::Object(values))
-    }
-}
-
-impl<'de> de::Deserialize<'de> for ValueKind {
-    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(ValueVisitor)
-    }
-}
-
-impl<'de> de::Deserializer<'de> for ValueKind {
+impl<'de> de::Deserializer<'de> for Value {
     type Error = HoconError;
 
     fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Null => visitor.visit_unit(),
             ValueKind::Boolean(v) => visitor.visit_bool(v),
             ValueKind::Integer(v) => {
@@ -112,7 +40,7 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_bool<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Boolean(v) => visitor.visit_bool(v),
             ValueKind::Integer(v) => {
                 if v == 0 {
@@ -126,63 +54,63 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_i8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v <= std::i8::MAX as isize && v >= std::i8::MIN as isize => visitor.visit_i8(v as i8),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_i16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v <= std::i16::MAX as isize && v >= std::i16::MIN as isize => visitor.visit_i16(v as i16),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_i32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v <= std::i32::MAX as isize && v >= std::i32::MIN as isize => visitor.visit_i32(v as i32),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_i64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) => visitor.visit_i64(v as i64),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u8<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v <= std::u8::MAX as isize && v >= std::u8::MIN as isize => visitor.visit_u8(v as u8),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u16<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v <= std::u16::MAX as isize && v >= std::u16::MIN as isize => visitor.visit_u16(v as u16),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v <= std::u32::MAX as isize && v >= std::u32::MIN as isize => visitor.visit_u32(v as u32),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_u64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Integer(v) if v >= std::u64::MIN as isize => visitor.visit_u32(v as u32),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_f32<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Real(v) => visitor.visit_f32(v as f32),
             ValueKind::Integer(v) => visitor.visit_f32(v as f32),
             _ => Err(self.invalid_type(&visitor)),
@@ -190,7 +118,7 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_f64<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Real(v) => visitor.visit_f64(v),
             ValueKind::Integer(v) => visitor.visit_f64(v as f64),
             _ => Err(self.invalid_type(&visitor)),
@@ -206,7 +134,7 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_string<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::String(s) => visitor.visit_string(s),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -217,7 +145,7 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_byte_buf<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::String(v) => visitor.visit_string(v),
             ValueKind::Array(v) => visit_array(v, visitor),
             _ => Err(self.invalid_type(&visitor)),
@@ -225,14 +153,14 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_option<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Null => visitor.visit_none(),
             _ => visitor.visit_some(self),
         }
     }
 
     fn deserialize_unit<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Null => visitor.visit_unit(),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -247,7 +175,7 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_seq<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Array(v) => visit_array(v, visitor),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -262,14 +190,14 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 
     fn deserialize_map<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Object(o) => visit_object(o, visitor),
             _ => Err(self.invalid_type(&visitor)),
         }
     }
 
     fn deserialize_struct<V: de::Visitor<'de>>(self, _name: &'static str, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        match self.0 {
             ValueKind::Array(v) => visit_array(v, visitor),
             ValueKind::Object(v) => visit_object(v, visitor),
             _ => Err(self.invalid_type(&visitor)),
@@ -290,15 +218,21 @@ impl<'de> de::Deserializer<'de> for ValueKind {
     }
 }
 
-impl ValueKind {
+impl Value {
     #[cold]
-    fn invalid_type<E: de::Error>(&self, exp: &dyn de::Expected) -> E {
-        de::Error::invalid_type(self.unexpected(), exp)
+    //fn invalid_type<E: de::Error>(&self, exp: &dyn de::Expected) -> E {
+    fn invalid_type(&self, exp: &dyn de::Expected) -> HoconError {
+        let position = error::Position {
+            line: self.1.line,
+            column: self.1.column,
+        };
+        let unexp = self.unexpected();
+        HoconError::deserialization_invalid_type(position, exp.to_string(), unexp.to_string())
     }
 
     #[cold]
     fn unexpected(&self) -> de::Unexpected {
-        match *self {
+        match self.0 {
             ValueKind::Null => de::Unexpected::Unit,
             ValueKind::Boolean(b) => de::Unexpected::Bool(b),
             ValueKind::Integer(n) => {
@@ -326,18 +260,24 @@ fn visit_array<'de, V: de::Visitor<'de>>(array: Array, visitor: V) -> Result<V::
     if remaining == 0 {
         Ok(seq)
     } else {
-        Err(HoconError::message("fewer elements in array"))
+        Err(HoconError::string(format!(
+            "fewer elements in array at line {line} and column {column}",
+            line = deserializer.position.line,
+            column = deserializer.position.column
+        )))
     }
 }
 
 struct ArrayDeserializer {
-    iter: std::vec::IntoIter<ValueKind>,
+    iter: std::vec::IntoIter<Value>,
+    position: Position,
 }
 
 impl ArrayDeserializer {
     fn new(array: Array) -> Self {
         ArrayDeserializer {
-            iter: array.items.into_iter().map(|x| x.0).collect::<Vec<_>>().into_iter(),
+            iter: array.items.into_iter(),
+            position: array.position,
         }
     }
 }
@@ -356,7 +296,11 @@ impl<'de> de::Deserializer<'de> for ArrayDeserializer {
             if remaining == 0 {
                 Ok(ret)
             } else {
-                Err(HoconError::message("fewer elements in array"))
+                Err(HoconError::string(format!(
+                    "fewer elements in array at line {line} and column {column}",
+                    line = self.position.line,
+                    column = self.position.column
+                )))
             }
         }
     }
@@ -406,13 +350,15 @@ fn visit_object<'de, V: de::Visitor<'de>>(object: Object, visitor: V) -> Result<
 
 struct ObjectDeserializer {
     iter: <Fields as IntoIterator>::IntoIter,
-    value: Option<ValueKind>,
+    position: Position,
+    value: Option<Value>,
 }
 
 impl ObjectDeserializer {
     fn new(object: Object) -> Self {
         ObjectDeserializer {
             iter: object.fields.into_iter(),
+            position: object.position,
             value: None,
         }
     }
@@ -423,9 +369,10 @@ impl<'de> de::MapAccess<'de> for ObjectDeserializer {
 
     fn next_key_seed<T: de::DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> {
         match self.iter.next() {
-            Some((key, Value(value, _))) => {
+            Some((key, value)) => {
+                let key_string = Value(ValueKind::String(key), self.position.clone());
                 self.value = Some(value);
-                seed.deserialize(ValueKind::String(key)).map(Some)
+                seed.deserialize(key_string).map(Some)
             }
             None => Ok(None),
         }
@@ -467,27 +414,42 @@ impl<'de> de::Deserializer<'de> for ObjectDeserializer {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
-fn visit_enum<'de, V: de::Visitor<'de>>(v: ValueKind, visitor: V) -> Result<V::Value, HoconError> {
-    let (variant, value) = match v {
+fn visit_enum<'de, V: de::Visitor<'de>>(v: Value, visitor: V) -> Result<V::Value, HoconError> {
+    let (variant, value) = match v.0 {
         ValueKind::Object(value) => {
             let mut iter = value.fields.into_iter();
-            let (variant, Value(value, _)) = match iter.next() {
+            let (variant, value) = match iter.next() {
                 Some(v) => v,
                 None => {
-                    return Err(HoconError::message("map with a single key"));
+                    return Err(HoconError::string(format!(
+                        "map with a single key at line {line} and column {column}",
+                        line = v.1.line,
+                        column = v.1.column
+                    )));
                 }
             };
 
             if iter.next().is_some() {
-                return Err(HoconError::message("map with a single key"));
+                return Err(HoconError::string(format!(
+                    "map with a single key at line {line} and column {column}",
+                    line = v.1.line,
+                    column = v.1.column
+                )));
             }
 
-            (ValueKind::String(variant), Some(value))
+            let variant = Value(ValueKind::String(variant), v.1.clone());
+            (variant, Some(value))
         }
-        ValueKind::String(variant) => (ValueKind::String(variant), None),
-        _other => {
-            return Err(HoconError::message("string or map"));
+        ValueKind::String(variant) => {
+            let variant = Value(ValueKind::String(variant), v.1.clone());
+            (variant, None)
+        }
+        _ => {
+            return Err(HoconError::string(format!(
+                "string or map at line {line} and column {column}",
+                line = v.1.line,
+                column = v.1.column
+            )));
         }
     };
 
@@ -495,8 +457,8 @@ fn visit_enum<'de, V: de::Visitor<'de>>(v: ValueKind, visitor: V) -> Result<V::V
 }
 
 struct EnumDeserializer {
-    variant: ValueKind,
-    value: Option<ValueKind>,
+    variant: Value,
+    value: Option<Value>,
 }
 
 impl<'de> de::EnumAccess<'de> for EnumDeserializer {
@@ -505,13 +467,17 @@ impl<'de> de::EnumAccess<'de> for EnumDeserializer {
     type Variant = VariantDeserializer;
 
     fn variant_seed<V: de::DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, VariantDeserializer), Self::Error> {
-        let visitor = VariantDeserializer { value: self.value };
+        let visitor = VariantDeserializer {
+            value: self.value,
+            position: self.variant.1.clone(),
+        };
         seed.deserialize(self.variant).map(|v| (v, visitor))
     }
 }
 
 struct VariantDeserializer {
-    value: Option<ValueKind>,
+    value: Option<Value>,
+    position: Position,
 }
 
 impl<'de> de::VariantAccess<'de> for VariantDeserializer {
@@ -527,21 +493,33 @@ impl<'de> de::VariantAccess<'de> for VariantDeserializer {
     fn newtype_variant_seed<T: de::DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Self::Error> {
         match self.value {
             Some(value) => seed.deserialize(value),
-            None => Err(HoconError::message("newtype variant")),
+            None => Err(HoconError::string(format!(
+                "newtype variant at line {line} and column {column}",
+                line = self.position.line,
+                column = self.position.column
+            ))),
         }
     }
 
     fn tuple_variant<V: de::Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
-            Some(ValueKind::Array(v)) => de::Deserializer::deserialize_any(ArrayDeserializer::new(v), visitor),
-            _ => Err(HoconError::message("tuple variant")),
+            Some(Value(ValueKind::Array(v), _)) => de::Deserializer::deserialize_any(ArrayDeserializer::new(v), visitor),
+            _ => Err(HoconError::string(format!(
+                "tuple variant at line {line} and column {column}",
+                line = self.position.line,
+                column = self.position.column
+            ))),
         }
     }
 
     fn struct_variant<V: de::Visitor<'de>>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
-            Some(ValueKind::Object(v)) => de::Deserializer::deserialize_any(ObjectDeserializer::new(v), visitor),
-            _ => Err(HoconError::message("struct variant")),
+            Some(Value(ValueKind::Object(v), _)) => de::Deserializer::deserialize_any(ObjectDeserializer::new(v), visitor),
+            _ => Err(HoconError::string(format!(
+                "struct variant at line {line} and column {column}",
+                line = self.position.line,
+                column = self.position.column
+            ))),
         }
     }
 }
@@ -551,8 +529,8 @@ impl<'de> de::VariantAccess<'de> for VariantDeserializer {
 mod tests {
 
     use super::*;
-    use std::collections::HashMap;
     use crate::value::Position;
+    use std::collections::HashMap;
 
     #[test]
     fn value_bool() {

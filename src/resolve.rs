@@ -3,7 +3,6 @@ use crate::ast::{FieldOp, FieldOrInclude, PathRef, Span};
 use crate::error::Error;
 use crate::value::{Array, ArrayItems, Fields, Object, Position, Value, ValueKind};
 
-
 pub(crate) fn resolve(input: ast::Value) -> Result<Value, Error> {
     let span = input.span;
     let column = span.get_column();
@@ -225,27 +224,21 @@ fn cast_values_to_objects(values: Vec<Value>) -> impl IntoIterator<Item = Object
 }
 
 fn merge_objects(objects: impl IntoIterator<Item = Object>) -> Object {
-    let res = objects.into_iter().fold(None, |acc, x| {
-        match acc {
-            None => {
-                let all_fields = x.fields;
-                let position = x.position;
-                Some((all_fields, position))
-            }
-            Some((mut all_fields, position)) => {
-                all_fields.extend(x.fields);
-                Some((all_fields, position))
-            }
+    let res = objects.into_iter().fold(None, |acc, x| match acc {
+        None => {
+            let all_fields = x.fields;
+            let position = x.position;
+            Some((all_fields, position))
+        }
+        Some((mut all_fields, position)) => {
+            all_fields.extend(x.fields);
+            Some((all_fields, position))
         }
     });
 
     match res {
-        Some((all_fields, position)) => {
-            Object::new(all_fields, position)
-        },
-        None => {
-            Object::new(Fields::default(), Position::default())
-        }
+        Some((all_fields, position)) => Object::new(all_fields, position),
+        None => Object::new(Fields::default(), Position::default()),
     }
 }
 
@@ -256,21 +249,17 @@ fn cast_values_to_arrays(values: Vec<Value>) -> impl IntoIterator<Item = Array> 
 }
 
 fn merge_arrays(arrays: impl IntoIterator<Item = Array>) -> Array {
-    let res = arrays.into_iter().fold(None, |acc, x| {
-        match acc {
-            None => {
-                Some((x.items, x.position))
-            }
-            Some((mut all_items, pos)) => {
-                all_items.extend(x.items);
-                Some((all_items, pos))
-            }
+    let res = arrays.into_iter().fold(None, |acc, x| match acc {
+        None => Some((x.items, x.position)),
+        Some((mut all_items, pos)) => {
+            all_items.extend(x.items);
+            Some((all_items, pos))
         }
     });
 
     match res {
         Some((items, position)) => Array::new(items, position),
-        None => Array::new(ArrayItems::default(), Position::default())
+        None => Array::new(ArrayItems::default(), Position::default()),
     }
 }
 
